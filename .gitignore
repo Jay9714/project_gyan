@@ -1,0 +1,24 @@
+# .gitignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# VS Code & OS
+.vscode/
+.DS_Store
+
+# Data & Secrets
+data_store/
+sutra_data/
+portfolio_data/
+*.db
+*.db-journal
+*.log
+
+# Models
+saved_models/
+
+# n8n
+.n8n/

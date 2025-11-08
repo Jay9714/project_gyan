@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+celery
+redis
+sqlalchemy
+psycopg2-binary
+pandas
+yfinance
+ta
+prophet
+scikit-learn
+tensorflow
+streamlit
+requests
+plotly
+python-dotenv

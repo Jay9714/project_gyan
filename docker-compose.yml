@@ -1,0 +1,84 @@
+version: '3.9'
+
+services:
+  # --- 1. CORE INFRASTRUCTURE ---
+
+  # Service: PostgreSQL Database
+  db:
+    image: postgres:15
+    container_name: gyan_db
+    env_file: .env # Loads the .env file for passwords
+    ports:
+      - '5432:5432' # Exposes the DB to your local machine
+    volumes:
+      - ./data_store/postgres_data:/var/lib/postgresql/data
+
+  # Service: Redis Broker
+  redis:
+    image: redis:7
+    container_name: gyan_redis
+    ports:
+      - '6379:6379'
+
+  # --- 2. PYTHON APPLICATION SERVICES ---
+
+  # Service: Setu (API Gateway)
+  setu_api:
+    build: ./services/api_setu
+    container_name: gyan_setu_api
+    ports:
+      - '8000:8000' # Exposes the API
+    volumes:
+      - ./services/api_setu:/app # Links your code live
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  # Service: Astra (AI Brain)
+  astra_brain:
+    build: ./services/engine_astra
+    container_name: gyan_astra_brain
+    volumes:
+      - ./services/engine_astra:/app
+      - ./saved_models:/app/saved_models
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  # Service: Chakra (Nightly Scheduler)
+  chakra_scheduler:
+    build: ./services/worker_chakra
+    container_name: gyan_chakra_scheduler
+    volumes:
+      - ./services/worker_chakra:/app
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  # Service: Darpan (Dashboard)
+  darpan_ui:
+    build: ./services/frontend_darpan
+    container_name: gyan_darpan_ui
+    ports:
+      - '8501:8501' # Exposes the Streamlit dashboard
+    volumes:
+      - ./services/frontend_darpan:/app
+    depends_on:
+      - setu_api
+
+  # Service: Sutra (Automation)
+  sutra_automation:
+    image: n8nio/n8n
+    container_name: gyan_sutra_automation
+    ports:
+      - '5678:5678'
+    volumes:
+      - ./sutra_data:/home/node/.n8n
+    environment:
+      - GENERIC_TIMEZONE=Asia/Kolkata
+
+volumes:
+  postgres_data:

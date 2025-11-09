@@ -7,9 +7,12 @@ services:
   db:
     image: postgres:15
     container_name: gyan_db
-    env_file: .env # Loads the .env file for passwords
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=gyan_db
     ports:
-      - '5432:5432' # Exposes the DB to your local machine
+      - '5433:5432' 
     volumes:
       - ./data_store/postgres_data:/var/lib/postgresql/data
 
@@ -27,10 +30,12 @@ services:
     build: ./services/api_setu
     container_name: gyan_setu_api
     ports:
-      - '8000:8000' # Exposes the API
+      - '8000:8000'
     volumes:
-      - ./services/api_setu:/app # Links your code live
-    env_file: .env
+      - ./services/api_setu:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
       - redis
@@ -42,7 +47,9 @@ services:
     volumes:
       - ./services/engine_astra:/app
       - ./saved_models:/app/saved_models
-    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
       - redis
@@ -53,7 +60,9 @@ services:
     container_name: gyan_chakra_scheduler
     volumes:
       - ./services/worker_chakra:/app
-    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
       - redis
@@ -63,7 +72,7 @@ services:
     build: ./services/frontend_darpan
     container_name: gyan_darpan_ui
     ports:
-      - '8501:8501' # Exposes the Streamlit dashboard
+      - '8501:8501'
     volumes:
       - ./services/frontend_darpan:/app
     depends_on:

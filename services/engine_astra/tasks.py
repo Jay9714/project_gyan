@@ -5,73 +5,82 @@ import pandas as pd
 import yfinance as yf
 from celery import Celery
 from sqlalchemy.exc import IntegrityError
-import numpy as np # Import numpy
+import numpy as np 
 
-# Import our new database and stock list
-from database import SessionLocal, create_db_and_tables, StockData
+# Import our schemas, list, and TA functions
+from database import SessionLocal, create_db_and_tables, StockData, FundamentalData
 from stock_list import NIFTY50_TICKERS
+from technical_analysis import add_ta_features # This is our Phase 3 TA code
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
 
 app.conf.task_default_queue = 'astra_q'
 
-@app.on_after_configure.connect
-def setup_on_startup(sender, **kwargs):
-    """
-    Run this once when the Astra worker first starts.
-    This creates our PostgreSQL tables.
-    """
-    print("Astra: Running startup task: Creating DB tables...")
-    create_db_and_tables()
+# --- WE HAVE REMOVED THE @app.on_after_configure.connect FUNCTION ---
+# The new 'migration' service handles table creation.
 
-@app.task(name="astra.run_data_pipeline")
-def run_data_pipeline():
+@app.task(name="astra.run_nightly_update")
+def run_nightly_update():
     """
-    This is the main data pipeline task.
-    This version flattens the multi-index columns from yfinance.
+    This is the full Phase 3 data pipeline task.
     """
-    print("ASTRA: Received job: run_data_pipeline. Starting...")
+    print("ASTRA: Received job: run_nightly_update. Starting...")
     db = SessionLocal()
-    
-    for ticker in NIFTY50_TICKERS:
-        print(f"ASTRA: Fetching data for {ticker}...")
-        try:
-            # 1. Fetch data. This returns a MultiIndex DataFrame.
-            data = yf.download(ticker, period="2y", interval="1d", auto_adjust=False)
-            
-            if data.empty:
-                print(f"ASTRA: No data found for {ticker}. Skipping.")
-                continue
-            
-            # --- THIS IS THE ROBUST FIX ---
-            # 2. Flatten the MultiIndex columns.
-            # This turns [('Open', 'RELIANCE.NS'), ('Close', 'RELIANCE.NS')]
-            # into a simple list: ['Open', 'Close']
-            data.columns = data.columns.get_level_values(0)
-            # --- END FIX ---
 
-            # 3. Iterate using iterrows().
-            # Now 'row' will be a simple Series, and 'row['Open']' will work.
-            for index, row in data.iterrows():
-                
-                # 4. Check for NaN (Not a Number)
-                # This check will now work correctly.
+    for ticker in NIFTY50_TICKERS:
+        print(f"ASTRA: Processing {ticker}...")
+        try:
+            # 1. Fetch Price Data
+            t = yf.Ticker(ticker)
+            data = t.history(period="2y", interval="1d", auto_adjust=False)
+
+            if data.empty:
+                print(f"ASTRA: No price data found for {ticker}. Skipping.")
+                continue
+
+            # 2. Calculate TA Features
+            data_with_ta = add_ta_features(data)
+
+            # 3. Save Price + TA Data
+            for index, row in data_with_ta.iterrows():
                 if pd.isna(row['Open']) or pd.isna(row['Close']):
                     continue 
-                        
+
                 db.merge(StockData(
                     ticker=ticker,
-                    date=index.date(),           # This is the date
-                    open=float(row['Open']),     # Cast to simple Python float
-                    high=float(row['High']),   # Cast to simple Python float
-                    low=float(row['Low']),     # Cast to simple Python float
-                    close=float(row['Close']),   # Cast to simple Python float
-                    volume=int(row['Volume'])    # Cast to simple Python int
+                    date=index.date(),
+                    open=float(row['Open']),
+                    high=float(row['High']),
+                    low=float(row['Low']),
+                    close=float(row['Close']),
+                    volume=int(row['Volume']),
+                    # --- Add TA data to save ---
+                    rsi=float(row['rsi']),
+                    macd=float(row['macd']),
+                    macd_signal=float(row['macd_signal']),
+                    ema_50=float(row['ema_50']),
+                    ema_200=float(row['ema_200'])
                 ))
-            
+
+            # 4. Fetch & Save Fundamental Data
+            info = t.info
+            if info and info.get('marketCap'):
+                db.merge(FundamentalData(
+                    ticker=ticker,
+                    company_name=info.get('longName'),
+                    sector=info.get('sector'),
+                    industry=info.get('industry'),
+                    market_cap=float(info.get('marketCap')),
+                    pe_ratio=float(info.get('trailingPE', 0)),
+                    eps=float(info.get('trailingEps', 0)),
+                    beta=float(info.get('beta', 0))
+                ))
+            else:
+                print(f"ASTRA: No fundamental data found for {ticker}.")
+
             db.commit()
-            print(f"ASTRA: Successfully saved/updated data for {ticker}.")
+            print(f"ASTRA: Successfully saved all data for {ticker}.")
 
         except IntegrityError as e:
             db.rollback()
@@ -79,9 +88,9 @@ def run_data_pipeline():
         except Exception as e:
             db.rollback()
             print(f"ASTRA: ERROR processing {ticker}: {e}")
-        
+
         time.sleep(1) 
-            
+
     db.close()
-    print("ASTRA: Data pipeline complete.")
+    print("ASTRA: Nightly update complete.")
     return f"Successfully processed {len(NIFTY50_TICKERS)} tickers."

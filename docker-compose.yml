@@ -2,8 +2,6 @@ version: '3.9'
 
 services:
   # --- 1. CORE INFRASTRUCTURE ---
-
-  # Service: PostgreSQL Database
   db:
     image: postgres:15
     container_name: gyan_db
@@ -14,20 +12,40 @@ services:
     ports:
       - '5433:5432' 
     volumes:
-      - ./data_store/postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
-  # Service: Redis Broker
   redis:
     image: redis:7
     container_name: gyan_redis
     ports:
       - '6379:6379'
 
-  # --- 2. PYTHON APPLICATION SERVICES ---
+  # --- 2. THE NEW MIGRATION SERVICE ---
+  migration:
+    build:
+      context: . # <-- FIX: Context is the root
+      dockerfile: ./services/engine_astra/Dockerfile # Point to the Dockerfile
+    container_name: gyan_migration
+    command: >
+      sh -c "
+        echo 'MIGRATION: Waiting for database...'
+        /app/wait-for-postgres.sh
+        echo 'MIGRATION: Database is up. Running schema migration...'
+        python -c 'from database import create_db_and_tables; create_db_and_tables()'
+        echo 'MIGRATION: Schema updated. Exiting.'
+      "
+    environment:
+      - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
 
-  # Service: Setu (API Gateway)
+  # --- 3. PYTHON APPLICATION SERVICES ---
   setu_api:
-    build: ./services/api_setu
+    build:
+      context: . # <-- FIX
+      dockerfile: ./services/api_setu/Dockerfile # <-- FIX
     container_name: gyan_setu_api
     ports:
       - '8000:8000'
@@ -37,12 +55,15 @@ services:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
 
-  # Service: Astra (AI Brain)
   astra_brain:
-    build: ./services/engine_astra
+    build:
+      context: . # <-- FIX
+      dockerfile: ./services/engine_astra/Dockerfile # <-- FIX
     container_name: gyan_astra_brain
     volumes:
       - ./services/engine_astra:/app
@@ -51,12 +72,15 @@ services:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
 
-  # Service: Chakra (Nightly Scheduler)
   chakra_scheduler:
-    build: ./services/worker_chakra
+    build:
+      context: . # <-- FIX
+      dockerfile: ./services/worker_chakra/Dockerfile # <-- FIX
     container_name: gyan_chakra_scheduler
     volumes:
       - ./services/worker_chakra:/app
@@ -64,12 +88,15 @@ services:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
 
-  # Service: Darpan (Dashboard)
   darpan_ui:
-    build: ./services/frontend_darpan
+    build:
+      context: . # <-- FIX
+      dockerfile: ./services/frontend_darpan/Dockerfile # <-- FIX
     container_name: gyan_darpan_ui
     ports:
       - '8501:8501'
@@ -78,7 +105,6 @@ services:
     depends_on:
       - setu_api
 
-  # Service: Sutra (Automation)
   sutra_automation:
     image: n8nio/n8n
     container_name: gyan_sutra_automation

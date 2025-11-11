@@ -18,8 +18,8 @@ def setup_periodic_tasks(sender, **kwargs):
     
     sender.add_periodic_task(
         crontab(hour=1, minute=0),
-        app.send_task.s("astra.run_data_pipeline", queue='astra_q'),
-        name='Run Nightly Data Pipeline'
+        app.send_task.s("astra.run_nightly_update", queue='astra_q'),
+        name='Run Nightly Data & Analysis Pipeline'
     )
     
     print("Chakra: Nightly schedule set for 1:00 AM.")

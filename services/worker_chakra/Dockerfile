@@ -3,15 +3,12 @@ FROM python:3.11-slim
 RUN useradd -m appuser
 WORKDIR /app
 
-# --- FIX: Copy from the root context ---
-COPY pyproject.toml .
-RUN pip install poetry
+# Copy the local requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN poetry export --only "celery,redis" -f requirements.txt --output requirements.txt
-RUN pip install --user --no-cache-dir -r requirements.txt
-
-# --- FIX: Copy the *specific* service folder into /app ---
-COPY ./services/worker_chakra /app
+# Copy app code
+COPY . .
 
 RUN chown -R appuser:appuser /app
 USER appuser

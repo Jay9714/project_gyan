@@ -18,6 +18,7 @@ data_store/
 sutra_data/
 portfolio_data/
 *.db
+*.db-journal
 *.log
 .env
 

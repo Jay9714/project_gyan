@@ -1,0 +1,12 @@
+[
+  {
+    "ticker": "RELIANCE.NS",
+    "quantity": 10,
+    "buy_price": 2400.00
+  },
+  {
+    "ticker": "TCS.NS",
+    "quantity": 5,
+    "buy_price": 3800.00
+  }
+]

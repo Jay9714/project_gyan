@@ -1,21 +1,14 @@
-# services/engine_astra/database.py
 import os
 from sqlalchemy import create_engine, Column, String, Float, Integer, Date, UniqueConstraint
-from sqlalchemy.orm import sessionmaker, declarative_base # Updated import
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Get the database URL from the environment variable
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:admin@db:5432/gyan_db')
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base() # Updated function call
-
-# --- Define Our Database Tables ---
+Base = declarative_base()
 
 class StockData(Base):
-    """
-    Table to store the daily OHLCV AND Technical Analysis data.
-    """
     __tablename__ = "stock_data"
     
     id = Column(Integer, primary_key=True, index=True)
@@ -27,28 +20,23 @@ class StockData(Base):
     close = Column(Float)
     volume = Column(Integer)
     
-    # --- NEW COLUMNS FOR PHASE 3 ---
+    # TA Columns
     rsi = Column(Float)
     macd = Column(Float)
     macd_signal = Column(Float)
     ema_50 = Column(Float)
     ema_200 = Column(Float)
-    # --- END NEW COLUMNS ---
     
     __table_args__ = (UniqueConstraint('ticker', 'date', name='_ticker_date_uc'),)
 
 
 class FundamentalData(Base):
-    """
-    Table to store fundamental data and our FINAL AI verdicts.
-    This table will have ONE row per stock.
-    """
     __tablename__ = "fundamental_data"
     
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True, unique=True, nullable=False)
     
-    # --- NEW COLUMNS FOR PHASE 3 ---
+    # Basic Info
     company_name = Column(String)
     sector = Column(String)
     industry = Column(String)
@@ -56,26 +44,17 @@ class FundamentalData(Base):
     pe_ratio = Column(Float)
     eps = Column(Float)
     beta = Column(Float)
-    # --- END NEW COLUMNS ---
     
-    # --- FUTURE COLUMNS (for AI & Rules Engine) ---
-    # sentiment_score = Column(Float)
-    # short_term_signal = Column(String)
-    # short_term_target = Column(Float)
-    # ai_confidence = Column(Float)
-    # ...etc
-    
+    # --- NEW COLUMNS FOR PHASE 4 (AI RESULTS) ---
+    ai_verdict = Column(String)        # "BUY", "SELL", "HOLD"
+    ai_confidence = Column(Float)      # 0.0 to 100.0
+    target_price = Column(Float)       # Prophet Prediction (30 days)
+    ai_reasoning = Column(String)      # "RSI Oversold | AI Predicts +10%"
+    last_updated = Column(Date)        # When did this analysis run?
+    # --------------------------------------------
 
-# --- Utility Function ---
 def create_db_and_tables():
-    """
-    This function will be called by the worker to create the tables
-    if they don't already exist.
-    """
     try:
-        # This command tells SQLAlchemy to find all tables that
-        # inherit from 'Base' and create them in the database.
-        # It will *add* the new columns without destroying existing data.
         Base.metadata.create_all(bind=engine)
         print("Database tables created/updated.")
     except Exception as e:

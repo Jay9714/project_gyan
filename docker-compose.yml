@@ -20,7 +20,6 @@ services:
   migration:
     build: ./services/engine_astra
     container_name: gyan_migration
-    # This command now works: it waits, then runs alembic.
     command: >
       sh -c "
         /app/wait-for-postgres.sh &&
@@ -31,6 +30,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - PYTHONPATH=/app
+    
+    # --- THIS IS THE MISSING PIECE ---
+    volumes:
+      - ./services/engine_astra:/app
+    # -------------------------------
+    
     depends_on:
       - db
       - redis

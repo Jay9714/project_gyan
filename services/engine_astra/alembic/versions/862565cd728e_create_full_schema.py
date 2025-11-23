@@ -1,8 +1,8 @@
-"""Create initial tables
+"""Create_Full_Schema
 
-Revision ID: 90c541e56c9d
+Revision ID: 862565cd728e
 Revises: 
-Create Date: 2025-11-22 12:06:46.450173
+Create Date: 2025-11-23 11:52:09.774881
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '90c541e56c9d'
+revision: str = '862565cd728e'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -31,6 +31,23 @@ def upgrade() -> None:
     sa.Column('pe_ratio', sa.Float(), nullable=True),
     sa.Column('eps', sa.Float(), nullable=True),
     sa.Column('beta', sa.Float(), nullable=True),
+    sa.Column('st_verdict', sa.String(), nullable=True),
+    sa.Column('st_target', sa.Float(), nullable=True),
+    sa.Column('st_stoploss', sa.Float(), nullable=True),
+    sa.Column('st_days', sa.Integer(), nullable=True),
+    sa.Column('mt_verdict', sa.String(), nullable=True),
+    sa.Column('mt_target', sa.Float(), nullable=True),
+    sa.Column('mt_stoploss', sa.Float(), nullable=True),
+    sa.Column('mt_days', sa.Integer(), nullable=True),
+    sa.Column('lt_verdict', sa.String(), nullable=True),
+    sa.Column('lt_target', sa.Float(), nullable=True),
+    sa.Column('lt_stoploss', sa.Float(), nullable=True),
+    sa.Column('lt_days', sa.Integer(), nullable=True),
+    sa.Column('ai_verdict', sa.String(), nullable=True),
+    sa.Column('ai_confidence', sa.Float(), nullable=True),
+    sa.Column('target_price', sa.Float(), nullable=True),
+    sa.Column('ai_reasoning', sa.String(), nullable=True),
+    sa.Column('last_updated', sa.Date(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_fundamental_data_id'), 'fundamental_data', ['id'], unique=False)
@@ -49,6 +66,7 @@ def upgrade() -> None:
     sa.Column('macd_signal', sa.Float(), nullable=True),
     sa.Column('ema_50', sa.Float(), nullable=True),
     sa.Column('ema_200', sa.Float(), nullable=True),
+    sa.Column('atr', sa.Float(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('ticker', 'date', name='_ticker_date_uc')
     )

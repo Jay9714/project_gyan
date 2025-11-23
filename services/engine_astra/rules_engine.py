@@ -1,55 +1,78 @@
-def analyze_stock(ticker, current_price, rsi, macd, ema_50, ai_confidence, prophet_forecast):
+def calculate_stop_loss(current_price, atr, term='short'):
+    multiplier = 1.5 if term == 'short' else 2.0 if term == 'mid' else 3.0
+    sl = current_price - (atr * multiplier)
+    return round(sl, 2)
+
+def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals):
     """
-    The 'Hybrid Decision Layer'.
-    Combines Technicals + AI to generate a verdict.
+    Updated Decision Layer: Now considers Fundamentals (ROE, Debt, Growth).
     """
-    verdict = "HOLD"
     reasoning = []
     
-    # --- 1. Technical Analysis Rules ---
-    if rsi < 30:
-        reasoning.append("RSI Oversold (Bullish)")
-    elif rsi > 70:
-        reasoning.append("RSI Overbought (Bearish)")
+    # Extract new metrics (default to 0/safe values if None)
+    roe = fundamentals.get('roe') or 0
+    de_ratio = fundamentals.get('debt_to_equity') or 0
+    growth = fundamentals.get('revenue_growth') or 0
+    
+    # --- 1. Extract Predictions ---
+    def get_pred(days):
+        try: return prophet_forecast.iloc[days]['yhat']
+        except: return current_price
+
+    st_target = get_pred(14)
+    mt_target = get_pred(60)
+    lt_target = get_pred(365)
+
+    # --- 2. Scoring Logic ---
+    
+    # TECHNICAL SCORE (0-5)
+    tech_score = 0
+    if rsi < 40: tech_score += 1
+    if macd > 0: tech_score += 1
+    if current_price > ema_50: tech_score += 1
+    
+    # FUNDAMENTAL SCORE (0-5) - NEW!
+    funda_score = 0
+    if roe > 0.15: # 15% ROE is good
+        funda_score += 2
+        reasoning.append("✅ Strong ROE (>15%)")
+    if de_ratio < 0.5: # Low debt
+        funda_score += 1
+        reasoning.append("✅ Low Debt")
+    elif de_ratio > 2.0: # High debt
+        funda_score -= 2
+        reasoning.append("⚠️ High Debt")
+    if growth > 0.10: # 10% Growth
+        funda_score += 2
+        reasoning.append("🚀 High Growth")
+
+    # --- 3. Verdicts ---
+    
+    # SHORT TERM: 80% Technical, 20% Fundamental
+    st_total = tech_score + (0.2 * funda_score)
+    st_verdict = "BUY" if st_total >= 2.5 else "SELL" if st_total < 1 else "HOLD"
+
+    # MID TERM: 50% Technical, 50% Fundamental
+    mt_total = tech_score + funda_score
+    mt_verdict = "BUY" if mt_total >= 4 else "SELL" if mt_total < 2 else "HOLD"
+    
+    # LONG TERM: 20% Technical, 80% Fundamental + AI Projection
+    lt_upside = ((lt_target - current_price) / current_price) * 100
+    lt_verdict = "BUY" if (funda_score >= 3 and lt_upside > 15) else "HOLD"
+
+    # --- 4. Safety Checks ---
+    if current_price < 0.9 * lt_target: # If price is way below target
+        lt_verdict = "ACCUMULATE"
         
-    if current_price > ema_50:
-        reasoning.append("Price > 50 EMA (Uptrend)")
-    else:
-        reasoning.append("Price < 50 EMA (Downtrend)")
-        
-    # --- 2. AI Analysis Rules ---
-    # Get the predicted price 30 days from now
-    future_price = prophet_forecast.iloc[-1]['yhat']
-    upside = ((future_price - current_price) / current_price) * 100
-    
-    reasoning.append(f"AI predicts {upside:.1f}% move")
-    
-    # --- 3. Final Decision Logic ---
-    score = 0
-    
-    # Bullish signals
-    if rsi < 40: score += 1
-    if macd > 0: score += 1
-    if current_price > ema_50: score += 1
-    if upside > 5: score += 2 # Strong AI prediction weights more
-    
-    # Bearish signals
-    if rsi > 70: score -= 1
-    if current_price < ema_50: score -= 1
-    if upside < -2: score -= 2
-    
-    # The Verdict
-    # We only trust the AI if confidence is decent (> 50%)
-    if score >= 3 and ai_confidence > 0.5:
-        verdict = "BUY"
-    elif score <= -2:
-        verdict = "SELL"
-    else:
-        verdict = "HOLD"
-        
+    # Stop Losses
+    st_sl = calculate_stop_loss(current_price, atr, 'short')
+    mt_sl = calculate_stop_loss(current_price, atr, 'mid')
+    lt_sl = calculate_stop_loss(current_price, atr, 'long')
+
     return {
-        "verdict": verdict,
-        "target_price": round(future_price, 2),
-        "ai_confidence": round(ai_confidence * 100, 1),
-        "reasoning": " | ".join(reasoning)
+        "st": {"verdict": st_verdict, "target": round(st_target, 2), "sl": st_sl},
+        "mt": {"verdict": mt_verdict, "target": round(mt_target, 2), "sl": mt_sl},
+        "lt": {"verdict": lt_verdict, "target": round(lt_target, 2), "sl": lt_sl},
+        "reasoning": " | ".join(reasoning),
+        "ai_confidence": ai_confidence
     }

@@ -3,12 +3,16 @@ FROM python:3.11-slim
 RUN useradd -m appuser
 WORKDIR /app
 
-# Copy the local requirements.txt
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY ./services/api_setu/requirements.txt .
 
-# Copy app code
-COPY . .
+RUN pip install --upgrade pip
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
+
+# --- FIX: Copy Shared Folder ---
+COPY ./shared /app/shared
+# -------------------------------
+
+COPY ./services/api_setu /app
 
 RUN chown -R appuser:appuser /app
 USER appuser

@@ -18,7 +18,9 @@ services:
       - '6379:6379'
 
   migration:
-    build: ./services/engine_astra
+    build:
+      context: .
+      dockerfile: ./services/engine_astra/Dockerfile
     container_name: gyan_migration
     command: >
       sh -c "
@@ -30,23 +32,23 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - PYTHONPATH=/app
-    
-    # --- THIS IS THE MISSING PIECE ---
     volumes:
       - ./services/engine_astra:/app
-    # -------------------------------
-    
+      - ./shared:/app/shared  # <-- THIS IS THE FIX
     depends_on:
       - db
       - redis
 
   setu_api:
-    build: ./services/api_setu
+    build:
+      context: .
+      dockerfile: ./services/api_setu/Dockerfile
     container_name: gyan_setu_api
     ports:
       - '8000:8000'
     volumes:
       - ./services/api_setu:/app
+      - ./shared:/app/shared  # <-- THIS IS THE FIX
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -58,11 +60,14 @@ services:
         condition: service_completed_successfully
 
   astra_brain:
-    build: ./services/engine_astra
+    build:
+      context: .
+      dockerfile: ./services/engine_astra/Dockerfile
     container_name: gyan_astra_brain
     volumes:
       - ./services/engine_astra:/app
       - ./saved_models:/app/saved_models
+      - ./shared:/app/shared  # <-- THIS IS THE FIX
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -74,10 +79,13 @@ services:
         condition: service_completed_successfully
 
   chakra_scheduler:
-    build: ./services/worker_chakra
+    build:
+      context: .
+      dockerfile: ./services/worker_chakra/Dockerfile
     container_name: gyan_chakra_scheduler
     volumes:
       - ./services/worker_chakra:/app
+      # Chakra doesn't strictly need shared code yet, but good for consistency
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -89,7 +97,9 @@ services:
         condition: service_completed_successfully
 
   darpan_ui:
-    build: ./services/frontend_darpan
+    build:
+      context: .
+      dockerfile: ./services/frontend_darpan/Dockerfile
     container_name: gyan_darpan_ui
     ports:
       - '8501:8501'

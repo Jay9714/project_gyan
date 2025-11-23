@@ -2,24 +2,39 @@ from pydantic import BaseModel
 from datetime import date
 from typing import Optional
 
+class HorizonData(BaseModel):
+    verdict: Optional[str]
+    target: Optional[float]
+    sl: Optional[float]
+
 class AnalysisResponse(BaseModel):
     ticker: str
     company_name: str
-    sector: str | None
+    sector: Optional[str]
     current_price: float
-    # AI Data
-    verdict: str | None
-    confidence: float | None
-    target_price: float | None
-    reasoning: str | None
-    last_updated: date | None
-    # Technicals
-    rsi: float | None
-    macd: float | None
+    
+    st: Optional[HorizonData]
+    mt: Optional[HorizonData]
+    lt: Optional[HorizonData]
 
+    verdict: Optional[str]
+    confidence: Optional[float]
+    target_price: Optional[float]
+    reasoning: Optional[str]
+    last_updated: Optional[date]
+    rsi: Optional[float]
+    macd: Optional[float]
+    source: Optional[str]
+
+# --- UPDATED SCREENER RESPONSE ---
 class ScreenerResponse(BaseModel):
     ticker: str
-    verdict: str
-    confidence: float
-    target_price: float
-    reasoning: str
+    company_name: str # Added
+    current_price: float # Added
+    verdict: Optional[str]
+    confidence: Optional[float]
+    target_price: Optional[float]
+    stop_loss: Optional[float] # Added
+    upside_pct: float # Added
+    duration_days: int # Added
+    reasoning: Optional[str]

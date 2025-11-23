@@ -10,7 +10,6 @@ Base = declarative_base()
 
 class StockData(Base):
     __tablename__ = "stock_data"
-    
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True, nullable=False)
     date = Column(Date, index=True, nullable=False)
@@ -19,20 +18,16 @@ class StockData(Base):
     low = Column(Float)
     close = Column(Float)
     volume = Column(Integer)
-    
-    # TA Columns
     rsi = Column(Float)
     macd = Column(Float)
     macd_signal = Column(Float)
     ema_50 = Column(Float)
     ema_200 = Column(Float)
-    
+    atr = Column(Float)
     __table_args__ = (UniqueConstraint('ticker', 'date', name='_ticker_date_uc'),)
-
 
 class FundamentalData(Base):
     __tablename__ = "fundamental_data"
-    
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True, unique=True, nullable=False)
     
@@ -45,13 +40,34 @@ class FundamentalData(Base):
     eps = Column(Float)
     beta = Column(Float)
     
-    # --- NEW COLUMNS FOR PHASE 4 (AI RESULTS) ---
-    ai_verdict = Column(String)        # "BUY", "SELL", "HOLD"
-    ai_confidence = Column(Float)      # 0.0 to 100.0
-    target_price = Column(Float)       # Prophet Prediction (30 days)
-    ai_reasoning = Column(String)      # "RSI Oversold | AI Predicts +10%"
-    last_updated = Column(Date)        # When did this analysis run?
-    # --------------------------------------------
+    # --- NEW FUNDAMENTAL METRICS ---
+    roe = Column(Float)            # Return on Equity
+    debt_to_equity = Column(Float) # Debt Level
+    free_cash_flow = Column(Float) # Real Cash
+    revenue_growth = Column(Float) # Growth Rate
+    # -------------------------------
+    
+    # Predictions
+    st_verdict = Column(String)
+    st_target = Column(Float)
+    st_stoploss = Column(Float)
+    st_days = Column(Integer)
+    
+    mt_verdict = Column(String)
+    mt_target = Column(Float)
+    mt_stoploss = Column(Float)
+    mt_days = Column(Integer)
+    
+    lt_verdict = Column(String)
+    lt_target = Column(Float)
+    lt_stoploss = Column(Float)
+    lt_days = Column(Integer)
+
+    ai_verdict = Column(String)
+    ai_confidence = Column(Float)
+    target_price = Column(Float)
+    ai_reasoning = Column(String)
+    last_updated = Column(Date)
 
 def create_db_and_tables():
     try:
@@ -59,3 +75,10 @@ def create_db_and_tables():
         print("Database tables created/updated.")
     except Exception as e:
         print(f"Error creating database tables: {e}")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

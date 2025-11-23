@@ -5,11 +5,11 @@ def calculate_stop_loss(current_price, atr, term='short'):
 
 def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals):
     """
-    Updated Decision Layer: Now considers Fundamentals (ROE, Debt, Growth).
+    Updated Decision Layer with SAFETY CHECKS.
     """
     reasoning = []
     
-    # Extract new metrics (default to 0/safe values if None)
+    # Extract Fundamentals
     roe = fundamentals.get('roe') or 0
     de_ratio = fundamentals.get('debt_to_equity') or 0
     growth = fundamentals.get('revenue_growth') or 0
@@ -27,42 +27,57 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     
     # TECHNICAL SCORE (0-5)
     tech_score = 0
-    if rsi < 40: tech_score += 1
+    if rsi < 40: 
+        tech_score += 1
+        reasoning.append("✅ RSI Oversold")
     if macd > 0: tech_score += 1
-    if current_price > ema_50: tech_score += 1
+    if current_price > ema_50: 
+        tech_score += 1
+        reasoning.append("✅ Uptrend")
     
-    # FUNDAMENTAL SCORE (0-5) - NEW!
+    # FUNDAMENTAL SCORE (0-5)
     funda_score = 0
-    if roe > 0.15: # 15% ROE is good
+    if roe > 0.15: 
         funda_score += 2
-        reasoning.append("✅ Strong ROE (>15%)")
-    if de_ratio < 0.5: # Low debt
-        funda_score += 1
-        reasoning.append("✅ Low Debt")
-    elif de_ratio > 2.0: # High debt
+        reasoning.append("✅ Strong ROE")
+    if de_ratio < 0.5: funda_score += 1
+    elif de_ratio > 2.0: 
         funda_score -= 2
         reasoning.append("⚠️ High Debt")
-    if growth > 0.10: # 10% Growth
+    if growth > 0.10: 
         funda_score += 2
         reasoning.append("🚀 High Growth")
 
-    # --- 3. Verdicts ---
+    # --- 3. Verdict Generation with SAFETY CHECKS ---
     
-    # SHORT TERM: 80% Technical, 20% Fundamental
-    st_total = tech_score + (0.2 * funda_score)
-    st_verdict = "BUY" if st_total >= 2.5 else "SELL" if st_total < 1 else "HOLD"
+    def get_verdict(score, target, price):
+        upside = ((target - price) / price) * 100
+        
+        # SAFETY RULE 1: If AI predicts a crash (>2% drop), NEVER Buy.
+        if upside < -2.0:
+            return "SELL"
+        
+        # SAFETY RULE 2: If upside is tiny (<2%), just Hold.
+        if upside < 2.0:
+            return "HOLD"
 
-    # MID TERM: 50% Technical, 50% Fundamental
-    mt_total = tech_score + funda_score
-    mt_verdict = "BUY" if mt_total >= 4 else "SELL" if mt_total < 2 else "HOLD"
+        # Only if AI agrees (Upside > 2%), check the Score
+        if score >= 3.5: return "BUY"
+        if score >= 2.0: return "ACCUMULATE"
+        return "HOLD"
+
+    # Calculate Scores for each horizon
+    # Short Term: 80% Tech, 20% Funda
+    st_score_total = tech_score + (0.2 * funda_score)
+    st_verdict = get_verdict(st_score_total, st_target, current_price)
+
+    # Mid Term: 50% Tech, 50% Funda
+    mt_score_total = tech_score + funda_score
+    mt_verdict = get_verdict(mt_score_total, mt_target, current_price)
     
-    # LONG TERM: 20% Technical, 80% Fundamental + AI Projection
-    lt_upside = ((lt_target - current_price) / current_price) * 100
-    lt_verdict = "BUY" if (funda_score >= 3 and lt_upside > 15) else "HOLD"
-
-    # --- 4. Safety Checks ---
-    if current_price < 0.9 * lt_target: # If price is way below target
-        lt_verdict = "ACCUMULATE"
+    # Long Term: 20% Tech, 80% Funda
+    lt_score_total = (0.2 * tech_score) + funda_score
+    lt_verdict = get_verdict(lt_score_total, lt_target, current_price)
         
     # Stop Losses
     st_sl = calculate_stop_loss(current_price, atr, 'short')

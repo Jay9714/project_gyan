@@ -21,84 +21,54 @@ app.conf.task_default_queue = 'astra_q'
 
 # --- NEW HELPER: Adapted from automated_stock_analyzer.py ---
 def calculate_advanced_fundamentals(stock_obj):
-    """
-    Computes ROE, Debt-to-Equity, FCF, and Growth using yfinance data.
-    Returns a dictionary of ratios.
-    """
-    ratios = {
-        "roe": 0.0,
-        "debt_to_equity": 0.0,
-        "free_cash_flow": 0.0,
-        "revenue_growth": 0.0
-    }
-    
+    """Computes ROE, Debt-to-Equity, FCF, and Growth."""
+    ratios = {"roe": 0.0, "debt_to_equity": 0.0, "free_cash_flow": 0.0, "revenue_growth": 0.0}
     try:
-        # 1. Fetch Tables
         bs = stock_obj.balance_sheet
         fin = stock_obj.financials
         cf = stock_obj.cashflow
         fast = stock_obj.fast_info
         info = stock_obj.info
 
-        # 2. ROE (Net Income / Total Equity)
-        net_income = None
-        total_equity = None
-        
-        # Find Net Income
+        # 1. ROE
+        net_income, total_equity = None, None
         if not fin.empty:
-            for key in ["Net Income", "Net Income Common Stockholders", "Net Income Applicable To Common Shares"]:
-                if key in fin.index:
-                    net_income = fin.loc[key].iloc[0]
-                    break
-        
-        # Find Equity
+            for key in ["Net Income", "Net Income Common Stockholders"]:
+                if key in fin.index: net_income = fin.loc[key].iloc[0]; break
         if not bs.empty:
-            for key in ["Total Stockholder Equity", "Total Equity", "Stockholders Equity"]:
-                if key in bs.index:
-                    total_equity = bs.loc[key].iloc[0]
-                    break
-                    
+            for key in ["Total Stockholder Equity", "Total Equity"]:
+                if key in bs.index: total_equity = bs.loc[key].iloc[0]; break
         if net_income and total_equity and total_equity != 0:
             ratios["roe"] = float(net_income / total_equity)
 
-        # 3. Debt to Equity
-        total_debt = None
-        # Try fast_info first (often cleaner)
-        if 'totalDebt' in fast: 
-            total_debt = fast['totalDebt']
-        elif not bs.empty and "Total Debt" in bs.index:
+        # 2. Debt to Equity
+        total_debt = fast.get('totalDebt')
+        if not total_debt and not bs.empty and "Total Debt" in bs.index:
             total_debt = bs.loc["Total Debt"].iloc[0]
-            
         if total_debt is not None and total_equity and total_equity != 0:
             ratios["debt_to_equity"] = float(total_debt / total_equity)
 
-        # 4. Free Cash Flow (Operating Cash Flow + CapEx)
+        # 3. Free Cash Flow
         if not cf.empty and "Total Cash From Operating Activities" in cf.index:
             ocf = cf.loc["Total Cash From Operating Activities"].iloc[0]
-            capex = 0
-            if "Capital Expenditures" in cf.index:
-                capex = cf.loc["Capital Expenditures"].iloc[0]
+            capex = cf.loc["Capital Expenditures"].iloc[0] if "Capital Expenditures" in cf.index else 0
             ratios["free_cash_flow"] = float(ocf + capex)
         elif 'freeCashflow' in info:
              ratios["free_cash_flow"] = float(info['freeCashflow'])
 
-        # 5. Revenue Growth (Current vs Previous year)
+        # 4. Revenue Growth
         if not fin.empty:
-            for key in ["Total Revenue", "Revenue", "Total revenues"]:
+            for key in ["Total Revenue", "Revenue"]:
                 if key in fin.index:
-                    rev_series = fin.loc[key]
-                    if len(rev_series) >= 2:
-                        current_rev = rev_series.iloc[0]
-                        prev_rev = rev_series.iloc[1]
-                        if prev_rev != 0:
-                            ratios["revenue_growth"] = float((current_rev - prev_rev) / prev_rev)
+                    revs = fin.loc[key]
+                    if len(revs) >= 2 and revs.iloc[1] != 0:
+                        ratios["revenue_growth"] = float((revs.iloc[0] - revs.iloc[1]) / revs.iloc[1])
                     break
         elif 'revenueGrowth' in info:
              ratios["revenue_growth"] = float(info['revenueGrowth'])
 
     except Exception as e:
         print(f"ASTRA: Fundamental Calc Warning: {e}")
-    
     return ratios
 
 # --- MAIN LOGIC ---
@@ -133,11 +103,8 @@ def process_one_stock(ticker, db):
         
         if stock_records:
             stmt = insert(StockData).values(stock_records)
-            update_dict = {c: stmt.excluded.getattr(c) for c in [
-                "open", "high", "low", "close", "volume", "rsi", "macd", 
-                "macd_signal", "ema_50", "ema_200", "atr"
-            ]}
-            # Fix for getattr issue in newer SQLAlchemy, using direct column access
+            
+            # --- CORRECT FIX: Explicit update dictionary ---
             update_dict = {
                  "open": stmt.excluded.open, "high": stmt.excluded.high, "low": stmt.excluded.low,
                  "close": stmt.excluded.close, "volume": stmt.excluded.volume, "rsi": stmt.excluded.rsi,
@@ -159,7 +126,7 @@ def process_one_stock(ticker, db):
             prophet_model, forecast = train_prophet_model(ai_df, ticker)
             rf_model, confidence = train_classifier_model(ai_df, ticker)
             
-            # --- 5. CALCULATE FUNDAMENTALS (NEW) ---
+            # --- 5. CALCULATE FUNDAMENTALS ---
             funda_dict = calculate_advanced_fundamentals(t)
             
             # --- 6. RULES ENGINE ---
@@ -176,10 +143,10 @@ def process_one_stock(ticker, db):
                 atr=float(atr_val),
                 ai_confidence=float(confidence),
                 prophet_forecast=forecast,
-                fundamentals=funda_dict # Pass the new metrics
+                fundamentals=funda_dict
             )
             
-            # --- 7. SAVE VERDICT & FUNDAMENTALS ---
+            # --- 7. SAVE VERDICT ---
             info = t.info
             existing_funda = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
             
@@ -191,13 +158,12 @@ def process_one_stock(ticker, db):
                 "pe_ratio": float(info.get('trailingPE', 0)),
                 "eps": float(info.get('trailingEps', 0)),
                 "beta": float(info.get('beta', 0)),
-                
-                # NEW FUNDAMENTAL COLUMNS
+                # NEW METRICS
                 "roe": float(funda_dict['roe']),
                 "debt_to_equity": float(funda_dict['debt_to_equity']),
                 "free_cash_flow": float(funda_dict['free_cash_flow']),
                 "revenue_growth": float(funda_dict['revenue_growth']),
-                
+                # VERDICTS
                 "st_verdict": analysis_result['st']['verdict'],
                 "st_target": float(analysis_result['st']['target']),
                 "st_stoploss": float(analysis_result['st']['sl']),

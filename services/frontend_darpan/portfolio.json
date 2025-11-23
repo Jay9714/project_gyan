@@ -1,12 +1,137 @@
 [
   {
-    "ticker": "RELIANCE.NS",
-    "quantity": 10,
-    "buy_price": 2400.00
+    "ticker": "TCS.NS",
+    "quantity": 2,
+    "buy_price": 3759.38
   },
   {
-    "ticker": "TCS.NS",
+    "ticker": "AARTIDRUGS.NS",
+    "quantity": 1,
+    "buy_price": 588.47
+  },
+  {
+    "ticker": "ABDL.NS",
+    "quantity": 10,
+    "buy_price": 281
+  },
+  {
+    "ticker": "ACL.NS",
+    "quantity": 20,
+    "buy_price": 98.50
+  },
+  {
+    "ticker": "BEL.NS",
+    "quantity": 25,
+    "buy_price": 228.11
+  },
+  {
+    "ticker": "BMWVENTLTD.NS",
+    "quantity": 151,
+    "buy_price": 99
+  },
+  {
+    "ticker": "CEIGALL.NS",
+    "quantity": 37,
+    "buy_price": 401
+  },
+  {
+    "ticker": "EMAMILTD.NS",
     "quantity": 5,
-    "buy_price": 3800.00
+    "buy_price": 772.78
+  },
+  {
+    "ticker": "ESAFSFB.NS",
+    "quantity": 50,
+    "buy_price": 60.00
+  },
+  {
+    "ticker": "HCC.NS",
+    "quantity": 222,
+    "buy_price": 37.94
+  },
+  {
+    "ticker": "HDBFS.NS",
+    "quantity": 3,
+    "buy_price": 767.00
+  },
+  {
+    "ticker": "HFCL.NS",
+    "quantity": 30,
+    "buy_price": 169.42
+  },
+  {
+    "ticker": "IFCI.NS",
+    "quantity": 25,
+    "buy_price": 63.20
+  },
+  {
+    "ticker": "INDIASHLTR.NS",
+    "quantity": 5,
+    "buy_price": 493.00
+  },
+  {
+    "ticker": "JIOFIN.NS",
+    "quantity": 10,
+    "buy_price": 360.35
+  },
+  {
+    "ticker": "JSWCEMENT.NS",
+    "quantity": 50,
+    "buy_price": 147.00
+  },
+  {
+    "ticker": "MEDIASSIST.NS",
+    "quantity": 17,
+    "buy_price": 418.00
+  },
+  {
+    "ticker": "MMTC.NS",
+    "quantity": 20,
+    "buy_price": 87.92
+  },
+  {
+    "ticker": "NHPC.NS",
+    "quantity": 50,
+    "buy_price": 83.65
+  },
+  {
+    "ticker": "NTPC.NS",
+    "quantity": 1,
+    "buy_price": 430.02
+  },
+  {
+    "ticker": "PCBL.NS",
+    "quantity": 20,
+    "buy_price": 279.70
+  },
+  {
+    "ticker": "SCODATUBES.NS",
+    "quantity": 10,
+    "buy_price": 140.00
+  },
+  {
+    "ticker": "THINKINK.NS",
+    "quantity": 4500,
+    "buy_price": 0.72
+  },
+  {
+    "ticker": "TMCV.NS",
+    "quantity": 1,
+    "buy_price": 322.95
+  },
+  {
+    "ticker": "TMPV.NS",
+    "quantity": 1,
+    "buy_price": 362.50
+  },
+  {
+    "ticker": "VEDL.NS",
+    "quantity": 20,
+    "buy_price": 226.67
+  },
+  {
+    "ticker": "YESBANK.NS",
+    "quantity": 500,
+    "buy_price": 15.02
   }
 ]

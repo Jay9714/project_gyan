@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import random
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
@@ -15,69 +16,20 @@ from technical_analysis import add_ta_features
 from ai_models import train_prophet_model, train_classifier_model
 from rules_engine import analyze_stock
 
+# New Imports for Phase 4.5
+from fundamental_analysis import compute_fundamental_ratios, score_fundamentals, calculate_piotroski_f_score, altman_z_score, get_fundamental_score, get_risk_score
+from news_analysis import analyze_news_sentiment
+
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
 app.conf.task_default_queue = 'astra_q'
 
-# --- NEW HELPER: Adapted from automated_stock_analyzer.py ---
-def calculate_advanced_fundamentals(stock_obj):
-    """Computes ROE, Debt-to-Equity, FCF, and Growth."""
-    ratios = {"roe": 0.0, "debt_to_equity": 0.0, "free_cash_flow": 0.0, "revenue_growth": 0.0}
-    try:
-        bs = stock_obj.balance_sheet
-        fin = stock_obj.financials
-        cf = stock_obj.cashflow
-        fast = stock_obj.fast_info
-        info = stock_obj.info
-
-        # 1. ROE
-        net_income, total_equity = None, None
-        if not fin.empty:
-            for key in ["Net Income", "Net Income Common Stockholders"]:
-                if key in fin.index: net_income = fin.loc[key].iloc[0]; break
-        if not bs.empty:
-            for key in ["Total Stockholder Equity", "Total Equity"]:
-                if key in bs.index: total_equity = bs.loc[key].iloc[0]; break
-        if net_income and total_equity and total_equity != 0:
-            ratios["roe"] = float(net_income / total_equity)
-
-        # 2. Debt to Equity
-        total_debt = fast.get('totalDebt')
-        if not total_debt and not bs.empty and "Total Debt" in bs.index:
-            total_debt = bs.loc["Total Debt"].iloc[0]
-        if total_debt is not None and total_equity and total_equity != 0:
-            ratios["debt_to_equity"] = float(total_debt / total_equity)
-
-        # 3. Free Cash Flow
-        if not cf.empty and "Total Cash From Operating Activities" in cf.index:
-            ocf = cf.loc["Total Cash From Operating Activities"].iloc[0]
-            capex = cf.loc["Capital Expenditures"].iloc[0] if "Capital Expenditures" in cf.index else 0
-            ratios["free_cash_flow"] = float(ocf + capex)
-        elif 'freeCashflow' in info:
-             ratios["free_cash_flow"] = float(info['freeCashflow'])
-
-        # 4. Revenue Growth
-        if not fin.empty:
-            for key in ["Total Revenue", "Revenue"]:
-                if key in fin.index:
-                    revs = fin.loc[key]
-                    if len(revs) >= 2 and revs.iloc[1] != 0:
-                        ratios["revenue_growth"] = float((revs.iloc[0] - revs.iloc[1]) / revs.iloc[1])
-                    break
-        elif 'revenueGrowth' in info:
-             ratios["revenue_growth"] = float(info['revenueGrowth'])
-
-    except Exception as e:
-        print(f"ASTRA: Fundamental Calc Warning: {e}")
-    return ratios
-
-# --- MAIN LOGIC ---
 def process_one_stock(ticker, db):
     print(f"ASTRA: Processing {ticker}...")
     try:
         t = yf.Ticker(ticker)
         
-        # --- 1. FETCH PRICE DATA ---
+        # --- 1. FETCH PRICE ---
         data = t.history(period="2y", interval="1d", auto_adjust=False)
         if data.empty:
             print(f"ASTRA: No data found for {ticker}.")
@@ -86,113 +38,104 @@ def process_one_stock(ticker, db):
         # --- 2. CALCULATE TA ---
         data_with_ta = add_ta_features(data)
         
-        # --- 3. SAVE HISTORY (UPSERT) ---
+        # --- 3. SAVE HISTORY (The Fix is Here) ---
         stock_records = []
         for index, row in data_with_ta.iterrows():
-            if pd.isna(row['Open']) or pd.isna(row['Close']): continue
+            if pd.isna(row['Open']): continue
             stock_records.append({
-                "ticker": ticker,
-                "date": index.date(),
-                "open": float(row['Open']), "high": float(row['High']),
-                "low": float(row['Low']), "close": float(row['Close']),
-                "volume": int(row['Volume']), "rsi": float(row['rsi']),
-                "macd": float(row['macd']), "macd_signal": float(row['macd_signal']),
-                "ema_50": float(row['ema_50']), "ema_200": float(row['ema_200']),
-                "atr": float(row.get('atr', 0.0))
+                "ticker": ticker, "date": index.date(),
+                "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close']),
+                "volume": int(row['Volume']), "rsi": float(row['rsi']), "macd": float(row['macd']), "macd_signal": float(row['macd_signal']),
+                "ema_50": float(row['ema_50']), "ema_200": float(row['ema_200']), "atr": float(row.get('atr', 0.0))
             })
         
         if stock_records:
             stmt = insert(StockData).values(stock_records)
             
-            # --- CORRECT FIX: Explicit update dictionary ---
+            # --- THE FIX: Manual Dictionary (No getattr) ---
             update_dict = {
                  "open": stmt.excluded.open, "high": stmt.excluded.high, "low": stmt.excluded.low,
                  "close": stmt.excluded.close, "volume": stmt.excluded.volume, "rsi": stmt.excluded.rsi,
                  "macd": stmt.excluded.macd, "macd_signal": stmt.excluded.macd_signal,
                  "ema_50": stmt.excluded.ema_50, "ema_200": stmt.excluded.ema_200, "atr": stmt.excluded.atr
             }
+            # -----------------------------------------------
 
             stmt = stmt.on_conflict_do_update(index_elements=['ticker', 'date'], set_=update_dict)
             db.execute(stmt)
+
+        # --- 4. FUNDAMENTALS & RISK ---
+        # Fetch data structures first to avoid multiple API calls
+        fin = t.financials
+        bal = t.balance_sheet
+        cf = t.cashflow
+        info = t.info
         
-        # --- 4. AI TRAINING ---
-        ai_df = data_with_ta.reset_index().rename(columns={
-            'Date': 'date', 'Close': 'close', 'Volume': 'volume',
-            'Open': 'open', 'High': 'high', 'Low': 'low'
-        })
+        # Risk Scores
+        f_score = calculate_piotroski_f_score(t)
+        # Pass market cap (default to 0 if missing)
+        z_score = altman_z_score(fin, bal, info.get('marketCap', 0))
         
-        if len(ai_df) > 50:
-            print(f"ASTRA: Training AI models for {ticker}...")
-            prophet_model, forecast = train_prophet_model(ai_df, ticker)
-            rf_model, confidence = train_classifier_model(ai_df, ticker)
-            
-            # --- 5. CALCULATE FUNDAMENTALS ---
-            funda_dict = calculate_advanced_fundamentals(t)
-            
-            # --- 6. RULES ENGINE ---
-            latest_row = data_with_ta.iloc[-1]
-            atr_val = latest_row.get('atr', latest_row['Close'] * 0.02)
-            if pd.isna(atr_val): atr_val = latest_row['Close'] * 0.02
+        # Ratios
+        funda_dict = compute_fundamental_ratios(t)
+        
+        # Component Scores
+        ratios_for_score = {'roe': funda_dict['roe'], 'debt_to_equity': funda_dict['debt_to_equity'], 'revenue_growth': funda_dict['revenue_growth']}
+        risk_for_score = {'f_score': f_score, 'z_score': z_score}
+        
+        score_fund = get_fundamental_score(ratios_for_score, risk_for_score)
+        score_risk = get_risk_score(ratios_for_score, risk_for_score)
+        score_news = analyze_news_sentiment(ticker)
+        
+        # --- 5. AI & VERDICT ---
+        ai_df = data_with_ta.reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
+        prophet_model, forecast = train_prophet_model(ai_df, ticker)
+        rf_model, confidence = train_classifier_model(ai_df, ticker)
+        
+        latest = data_with_ta.iloc[-1]
+        atr_val = latest.get('atr', latest['Close']*0.02)
 
-            analysis_result = analyze_stock(
-                ticker, 
-                current_price=float(latest_row['Close']),
-                rsi=float(latest_row['rsi']),
-                macd=float(latest_row['macd']),
-                ema_50=float(latest_row['ema_50']),
-                atr=float(atr_val),
-                ai_confidence=float(confidence),
-                prophet_forecast=forecast,
-                fundamentals=funda_dict
-            )
-            
-            # --- 7. SAVE VERDICT ---
-            info = t.info
-            existing_funda = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
-            
-            data_dict = {
-                "company_name": info.get('longName', ticker),
-                "sector": info.get('sector', 'Unknown'),
-                "industry": info.get('industry', 'Unknown'),
-                "market_cap": float(info.get('marketCap', 0)),
-                "pe_ratio": float(info.get('trailingPE', 0)),
-                "eps": float(info.get('trailingEps', 0)),
-                "beta": float(info.get('beta', 0)),
-                # NEW METRICS
-                "roe": float(funda_dict['roe']),
-                "debt_to_equity": float(funda_dict['debt_to_equity']),
-                "free_cash_flow": float(funda_dict['free_cash_flow']),
-                "revenue_growth": float(funda_dict['revenue_growth']),
-                # VERDICTS
-                "st_verdict": analysis_result['st']['verdict'],
-                "st_target": float(analysis_result['st']['target']),
-                "st_stoploss": float(analysis_result['st']['sl']),
-                "mt_verdict": analysis_result['mt']['verdict'],
-                "mt_target": float(analysis_result['mt']['target']),
-                "mt_stoploss": float(analysis_result['mt']['sl']),
-                "lt_verdict": analysis_result['lt']['verdict'],
-                "lt_target": float(analysis_result['lt']['target']),
-                "lt_stoploss": float(analysis_result['lt']['sl']),
-                "ai_reasoning": analysis_result['reasoning'],
-                "ai_confidence": float(analysis_result['ai_confidence']), 
-                "last_updated": datetime.now().date()
-            }
+        analysis = analyze_stock(
+            ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
+            float(latest['ema_50']), float(atr_val),
+            float(confidence), forecast, funda_dict
+        )
 
-            if existing_funda:
-                for key, value in data_dict.items(): setattr(existing_funda, key, value)
-            else:
-                db.add(FundamentalData(ticker=ticker, **data_dict))
-
-            db.commit()
-            print(f"ASTRA: DONE {ticker}. Verdict: {analysis_result['st']['verdict']}")
-            return True
+        # --- 6. SAVE EVERYTHING ---
+        existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
+        data_dict = {
+            "company_name": info.get('longName', ticker),
+            "sector": info.get('sector', 'Unknown'), "industry": info.get('industry', 'Unknown'),
+            "market_cap": float(info.get('marketCap', 0)), "pe_ratio": float(info.get('trailingPE', 0)),
+            "eps": float(info.get('trailingEps', 0)), "beta": float(info.get('beta', 0)),
+            
+            "roe": float(funda_dict['roe']), "debt_to_equity": float(funda_dict['debt_to_equity']),
+            "free_cash_flow": float(funda_dict['free_cash_flow']), "revenue_growth": float(funda_dict['revenue_growth']),
+            
+            "piotroski_f_score": int(f_score), "altman_z_score": float(z_score),
+            "score_fundamental": float(score_fund), "score_risk": float(score_risk), "score_news": float(score_news),
+            
+            "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
+            "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
+            "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
+            "ai_reasoning": analysis['reasoning'], "ai_confidence": float(analysis['ai_confidence']), 
+            "last_updated": datetime.now().date()
+        }
+        
+        if existing:
+            for k, v in data_dict.items(): setattr(existing, k, v)
         else:
-            print(f"ASTRA: Not enough data to train for {ticker}")
-            return False
+            db.add(FundamentalData(ticker=ticker, **data_dict))
+            
+        db.commit()
+        print(f"ASTRA: DONE {ticker}. Verdict: {analysis['st']['verdict']}")
+        return True
 
     except Exception as e:
         db.rollback()
-        print(f"ASTRA: ERROR processing {ticker}: {e}")
+        print(f"ASTRA: ERROR {ticker}: {e}")
+        if "429" in str(e):
+            time.sleep(60)
         return False
 
 @app.task(name="astra.run_nightly_update")
@@ -201,7 +144,10 @@ def run_nightly_update():
     db = SessionLocal()
     for ticker in NIFTY50_TICKERS:
         process_one_stock(ticker, db)
-        time.sleep(1)
+        # Random sleep for politeness
+        delay = random.uniform(2.0, 5.0)
+        print(f"ASTRA: Sleeping {delay:.2f}s...")
+        time.sleep(delay)
     db.close()
     print("ASTRA: Nightly update complete.")
     return "Success"

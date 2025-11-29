@@ -14,17 +14,24 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 def train_prophet_model(df, ticker):
     """
     Trains a Prophet model to predict the closing price.
-    Returns the model object and the 30-day forecast DataFrame.
+    Tuned for 'Turnaround' stocks (high sensitivity to recent trends).
     """
     # Prepare data for Prophet (ds = date, y = close)
-    # Ensure date is timezone-naive to prevent Prophet errors
     df_prophet = df[['date', 'close']].rename(columns={'date': 'ds', 'close': 'y'})
-    # Remove timezone info if present
+    
+    # Ensure date is timezone-naive
     if pd.api.types.is_datetime64_any_dtype(df_prophet['ds']):
          df_prophet['ds'] = df_prophet['ds'].dt.tz_localize(None)
     
-    # Train Model
-    model = Prophet(daily_seasonality=True)
+    # --- TUNING FOR ACCURACY ---
+    # changepoint_prior_scale=0.5: Allows model to react fast to recent trend changes (e.g. RBI news)
+    # seasonality_mode='multiplicative': Handles high volatility stocks better
+    model = Prophet(
+        daily_seasonality=True,
+        changepoint_prior_scale=0.5, 
+        seasonality_mode='multiplicative'
+    )
+    
     try:
         # Try to add holidays, skip if library has issues or offline
         model.add_country_holidays(country_name='IN')
@@ -38,8 +45,8 @@ def train_prophet_model(df, ticker):
     with open(model_path, 'wb') as f:
         pickle.dump(model, f)
         
-    # Create Forecast (30 days future)
-    future = model.make_future_dataframe(periods=30)
+    # Create Forecast (1 Year into future)
+    future = model.make_future_dataframe(periods=365)
     forecast = model.predict(future)
     
     return model, forecast

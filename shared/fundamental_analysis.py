@@ -4,7 +4,7 @@ import math
 
 # --- Helper Functions ---
 def _find_first_row(df, keywords):
-    """Return the first index label in df that contains any of the keywords."""
+    """Return the first index label in df that contains any of the keywords (case-insensitive)."""
     if df.empty: return None
     low_index = [str(i).lower() for i in df.index]
     for kw in keywords:
@@ -22,7 +22,7 @@ def _get_val(df, keywords):
     return 0.0
 
 def _latest_and_prior(df, keywords):
-    """Get latest and prior year values."""
+    """Return (latest, prior) values from a pandas Series."""
     r = _find_first_row(df, keywords)
     if r:
         vals = df.loc[r].dropna().astype(float).values
@@ -30,22 +30,16 @@ def _latest_and_prior(df, keywords):
         if len(vals) == 1: return (vals[0], None)
     return (None, None)
 
-# --- 1. Core Data Extraction (compute_fundamental_ratios) ---
+
+# --- 1. Core Data Extraction ---
 
 def compute_fundamental_ratios(stock_obj):
     """
     Extracts ROE, Debt, FCF, and Growth using robust fallbacks.
-    Matches the 'Automated Stock Analyzer' logic.
     """
     ratios = {
-        "roe": 0.0,
-        "debt_to_equity": 0.0,
-        "free_cash_flow": 0.0,
-        "revenue_growth": 0.0,
-        "market_cap": 0.0,
-        "pe_ratio": 0.0,
-        "eps": 0.0,
-        "beta": 0.0
+        "roe": 0.0, "debt_to_equity": 0.0, "free_cash_flow": 0.0, "revenue_growth": 0.0,
+        "market_cap": 0.0, "pe_ratio": 0.0, "eps": 0.0, "beta": 0.0
     }
 
     try:
@@ -63,7 +57,7 @@ def compute_fundamental_ratios(stock_obj):
             ratios["beta"] = float(info.get("beta") or 0)
         except: pass
 
-        # ROE
+        # ROE (Net Income / Equity)
         net_income = _get_val(fin, ["Net Income", "Net Income Common Stockholders"])
         total_equity = _get_val(bs, ["Total Stockholder Equity", "Total Equity", "Stockholders Equity"])
         if net_income and total_equity:
@@ -76,12 +70,12 @@ def compute_fundamental_ratios(stock_obj):
         if total_debt and total_equity:
             ratios["debt_to_equity"] = float(total_debt / total_equity)
 
-        # Free Cash Flow
+        # Free Cash Flow (OCF + CapEx)
         ocf = _get_val(cf, ["Operating Cash Flow", "Total Cash From Operating Activities"])
         capex = _get_val(cf, ["Capital Expenditures"])
-        # Note: CapEx is usually negative in cashflow statements
+        # CapEx is usually negative, so we add it
         if ocf:
-            ratios["free_cash_flow"] = float(ocf + capex) # Add because capex is neg
+            ratios["free_cash_flow"] = float(ocf + capex)
         elif 'freeCashflow' in info:
              ratios["free_cash_flow"] = float(info['freeCashflow'])
 
@@ -93,11 +87,12 @@ def compute_fundamental_ratios(stock_obj):
              ratios["revenue_growth"] = float(info['revenueGrowth'])
 
     except Exception as e:
-        print(f"ASTRA: Fundamental extraction warning: {e}")
+        print(f"ASTRA: Fundamental Calc Warning: {e}")
     
     return ratios
 
-# --- 2. Risk Models ---
+
+# --- 2. Advanced Risk Models (Piotroski & Altman) ---
 
 def calculate_piotroski_f_score(stock_obj):
     """Calculates Piotroski F-Score (0-9)."""
@@ -106,9 +101,8 @@ def calculate_piotroski_f_score(stock_obj):
         fin = stock_obj.financials
         bal = stock_obj.balance_sheet
         cf = stock_obj.cashflow
+        if fin.empty or bal.empty: return 5 # Neutral default
         
-        if fin.empty or bal.empty: return 5
-
         ni_now, ni_prev = _latest_and_prior(fin, ["Net Income"])
         ta_now, ta_prev = _latest_and_prior(bal, ["Total Assets"])
         cfo_now, _ = _latest_and_prior(cf, ["Operating Cash Flow"])
@@ -127,16 +121,14 @@ def calculate_piotroski_f_score(stock_obj):
         # Efficiency (simplified)
         gm_now, gm_prev = _latest_and_prior(fin, ["Gross Profit"])
         rev_now, rev_prev = _latest_and_prior(fin, ["Total Revenue"])
-        
         if gm_now and rev_now and gm_prev and rev_prev:
             if (gm_now/rev_now) > (gm_prev/rev_prev): score += 1
             
         return score
-    except:
-        return 5
+    except: return 5
 
 def altman_z_score(fin, bal, market_cap):
-    """Calculates Altman Z-Score."""
+    """Calculates Altman Z-Score (Bankruptcy Risk)."""
     try:
         ta = _get_val(bal, ["Total Assets"])
         tl = _get_val(bal, ["Total Liabilities"])
@@ -146,7 +138,7 @@ def altman_z_score(fin, bal, market_cap):
         ebit = _get_val(fin, ["EBIT", "Operating Income"])
         sales = _get_val(fin, ["Total Revenue"])
         
-        if not ta or ta == 0: return 3.0
+        if not ta or ta == 0: return 3.0 # Safe default
         
         wc = ca - cl
         A = wc / ta
@@ -157,20 +149,50 @@ def altman_z_score(fin, bal, market_cap):
         
         z = (1.2*A) + (1.4*B) + (3.3*C) + (0.6*D) + (1.0*E)
         return float(z)
+    except: return 3.0
+
+def beneish_m_score(fin, bal, cf):
+    """
+    Simplified Beneish M-Score (Fraud Detection).
+    Focuses on core manipulation signals: Days Sales in Receivables & Gross Margin.
+    Full 8-variable model is often data-constrained on free APIs.
+    """
+    try:
+        # DSRI: Days Sales in Receivables Index
+        rec_now, rec_prev = _latest_and_prior(bal, ["Net Receivables", "Accounts Receivable"])
+        rev_now, rev_prev = _latest_and_prior(fin, ["Total Revenue", "Revenue"])
+        
+        dsri = 1.0
+        if rev_now and rev_prev and rec_now and rec_prev:
+            dsri = (rec_now / rev_now) / (rec_prev / rev_prev)
+
+        # GMI: Gross Margin Index (worsening margins is a risk)
+        gm_now, gm_prev = _latest_and_prior(fin, ["Gross Profit"])
+        gmi = 1.0
+        if gm_now and gm_prev and rev_now and rev_prev:
+             margin_now = gm_now / rev_now
+             margin_prev = gm_prev / rev_prev
+             gmi = margin_prev / margin_now # Inverted: deterioration > 1
+        
+        # Simplified Formula (Proxy)
+        # M = -4.84 + 0.92*DSRI + 0.528*GMI ...
+        m_score = -4.84 + (0.92 * dsri) + (0.528 * gmi)
+        
+        return float(m_score)
     except:
-        return 3.0
+        return -2.5 # Safe default
 
 # --- 3. Scoring Functions ---
 
 def score_fundamentals(r):
-    """Calculates 0-100 score based on raw ratios (ROE, Debt, etc)."""
+    """Calculates 0-100 score based on raw ratios."""
     score = 0.0
     weights = 0.0
 
     # ROE
     if r['roe'] != 0:
         weights += 1
-        score += min(max(r['roe'] * 100, 0), 20) # Cap at 20
+        score += min(max(r['roe'] * 100, 0), 20)
 
     # Debt
     weights += 1
@@ -189,23 +211,24 @@ def score_fundamentals(r):
 def get_fundamental_score(ratios, risk_metrics):
     """Combines Ratios + Risk Metrics into a composite score."""
     base_score = score_fundamentals(ratios)
-    
-    # Adjust based on Risk Models
     f_score = risk_metrics.get('f_score', 5)
     z_score = risk_metrics.get('z_score', 3)
+    m_score = risk_metrics.get('m_score', -2.5)
     
+    # Boost score for High Quality
     if f_score >= 7: base_score += 10
     elif f_score <= 3: base_score -= 10
     
     if z_score > 3: base_score += 5
     elif z_score < 1.8: base_score -= 20
     
+    if m_score > -1.78: base_score -= 25 # High fraud probability penalty
+    
     return max(0, min(100, base_score))
 
 def get_risk_score(ratios, risk_metrics):
     """Returns 0-100 Risk Score (Higher is Safer)."""
     score = 50.0
-    
     de = ratios.get('debt_to_equity', 0)
     if de < 0.5: score += 20
     elif de > 2.0: score -= 20
@@ -213,5 +236,8 @@ def get_risk_score(ratios, risk_metrics):
     z = risk_metrics.get('z_score', 3)
     if z > 3: score += 15
     elif z < 1.8: score -= 25
+    
+    m = risk_metrics.get('m_score', -2.5)
+    if m > -1.78: score -= 25
     
     return max(0, min(100, score))

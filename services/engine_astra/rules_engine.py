@@ -4,82 +4,81 @@ def calculate_stop_loss(current_price, atr, term='short'):
     return round(sl, 2)
 
 def calculate_momentum_target(current_price, atr, term='short'):
-    """
-    Calculates a target based on Volatility (ATR) and Momentum.
-    Used when AI is too bearish on a turnaround stock.
-    """
-    # Projecting 2x ATR moves as targets
-    multiplier = 2.0 if term == 'short' else 5.0 if term == 'mid' else 10.0
+    multiplier = 3.0 if term == 'short' else 8.0 if term == 'mid' else 15.0
     target = current_price + (atr * multiplier)
     return round(target, 2)
 
 def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score):
     reasoning = []
     
-    # Fundamentals
-    roe = fundamentals.get('roe') or 0
-    de_ratio = fundamentals.get('debt_to_equity') or 0
-    growth = fundamentals.get('revenue_growth') or 0
-    
-    # Predictions (Prophet)
+    # Data
     def get_pred(days):
         try: return prophet_forecast.iloc[days]['yhat']
         except: return current_price
     st_target = get_pred(14); mt_target = get_pred(60); lt_target = get_pred(365)
+    
+    # Risk Scores
+    f_score = fundamentals.get('piotroski_f_score', 5)
+    z_score = fundamentals.get('altman_z_score', 3.0)
+    m_score = fundamentals.get('beneish_m_score', -2.5)
 
-    # --- 1. IDENTIFY MARKET CONDITIONS ---
+    # --- TURNAROUND LOGIC (With Safety) ---
     is_uptrend = current_price > ema_50
     is_positive_news = sentiment_score > 0.1
     is_ai_bearish = st_target < current_price
     
-    # --- 2. TURNAROUND LOGIC (THE FIX) ---
-    # If Trend is UP + News is GOOD + AI is WRONG (Bearish) -> Override AI
-    using_momentum_target = False
+    # SAFETY: Only allow turnaround if NOT in bankruptcy zone
+    is_safe = z_score > 1.8 
     
-    if is_uptrend and is_positive_news and is_ai_bearish:
+    using_momentum_target = False
+    if is_uptrend and is_positive_news and is_ai_bearish and is_safe:
         using_momentum_target = True
         reasoning.append("🚀 Turnaround Detected (Momentum Override)")
         st_target = calculate_momentum_target(current_price, atr, 'short')
         mt_target = calculate_momentum_target(current_price, atr, 'mid')
         lt_target = calculate_momentum_target(current_price, atr, 'long')
-
-    # --- 3. SCORING ---
+    
+    # ... (Scoring Logic) ...
     score = 0
-    
-    # Tech
-    if rsi < 40: score += 1; reasoning.append("✅ RSI Oversold")
-    elif rsi > 75: score -= 1; reasoning.append("⚠️ RSI Overbought")
-    if is_uptrend: score += 1; reasoning.append("✅ Uptrend")
+    if rsi < 40: score += 1
     if macd > 0: score += 1
+    if is_uptrend: score += 1
     
-    # Funda
-    if roe > 0.15: score += 2; reasoning.append("✅ Strong ROE")
-    if growth > 0.10: score += 2; reasoning.append("🚀 High Growth")
+    # Fundamental Boost & Penalties (Pro Logic)
+    if f_score >= 7: score += 2; reasoning.append("💎 High Quality")
+    elif f_score <= 4: score -= 1; reasoning.append("⚠️ Low Quality")
+    
+    if z_score < 1.8: score -= 3; reasoning.append("⛔ Distress Risk")
+    
+    if m_score > -1.78: score -= 3; reasoning.append("⛔ Accounting Risk")
     
     # News
-    if sentiment_score > 0.2: score += 2; reasoning.append(f"📰 Positive News ({sentiment_score})")
-    elif sentiment_score < -0.2: score -= 2; reasoning.append("⚠️ Negative News")
+    if sentiment_score > 0.2: score += 2
+    elif sentiment_score < -0.2: score -= 2
 
-    # --- 4. VERDICT ---
+    # Verdict
     def get_verdict(term_score, target, price):
         upside = ((target - price) / price) * 100
         
+        # Hard Vetoes
+        if z_score < 1.8: return "AVOID" 
+        if m_score > -1.78: return "AVOID"
+        
         if using_momentum_target:
-             # If we forced a momentum target, trust the trend/news score
              if term_score >= 2: return "BUY"
              return "ACCUMULATE"
 
-        if target < price: return "HOLD" # Don't sell uptrends just because target is low
+        if target < price: return "HOLD"
         
         if upside > 5 and term_score >= 3.5: return "BUY"
         if term_score >= 2: return "ACCUMULATE"
         return "HOLD"
 
-    st_verdict = get_verdict(score, st_target, current_price)
-    mt_verdict = get_verdict(score, mt_target, current_price)
+    # ... (Final Calculation same as before) ...
+    st_verdict = get_verdict(score + (0.2 * ai_confidence * 100), st_target, current_price)
+    mt_verdict = get_verdict(score + 1.0, mt_target, current_price)
     lt_verdict = get_verdict(score, lt_target, current_price)
-
-    # Stop Losses
+    
     st_sl = calculate_stop_loss(current_price, atr, 'short')
     mt_sl = calculate_stop_loss(current_price, atr, 'mid')
     lt_sl = calculate_stop_loss(current_price, atr, 'long')

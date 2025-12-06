@@ -6,7 +6,6 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime
 from celery import Celery
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert 
 import numpy as np 
 
@@ -15,9 +14,10 @@ from shared.stock_list import NIFTY50_TICKERS
 from technical_analysis import add_ta_features
 from ai_models import train_prophet_model, train_classifier_model
 from rules_engine import analyze_stock
-from fundamental_analysis import compute_fundamental_ratios, score_fundamentals, calculate_piotroski_f_score, altman_z_score, get_fundamental_score, get_risk_score
-from shared.news_analysis import analyze_news_sentiment
 
+# --- NEW IMPORT FROM SHARED ---
+from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
+from shared.news_analysis import analyze_news_sentiment
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
@@ -28,16 +28,12 @@ def process_one_stock(ticker, db):
     try:
         t = yf.Ticker(ticker)
         
-        # --- 1. FETCH PRICE ---
+        # 1. PRICE DATA
         data = t.history(period="2y", interval="1d", auto_adjust=False)
-        if data.empty:
-            print(f"ASTRA: No data found for {ticker}.")
-            return False
-        
-        # --- 2. CALCULATE TA ---
+        if data.empty: return False
         data_with_ta = add_ta_features(data)
         
-        # --- 3. SAVE HISTORY ---
+        # Save History
         stock_records = []
         for index, row in data_with_ta.iterrows():
             if pd.isna(row['Open']): continue
@@ -59,28 +55,35 @@ def process_one_stock(ticker, db):
             stmt = stmt.on_conflict_do_update(index_elements=['ticker', 'date'], set_=update_dict)
             db.execute(stmt)
 
-        # --- 4. FUNDAMENTALS & RISK ---
+        # 2. FUNDAMENTALS & RISK (The Upgrade)
         fin = t.financials
         bal = t.balance_sheet
         cf = t.cashflow
         info = t.info
         
+        # Calculate new metrics
         f_score = calculate_piotroski_f_score(t)
         z_score = altman_z_score(fin, bal, info.get('marketCap', 0))
+        m_score = beneish_m_score(fin, bal, cf)
         funda_dict = compute_fundamental_ratios(t)
         
+        # Scoring
         ratios_for_score = {'roe': funda_dict['roe'], 'debt_to_equity': funda_dict['debt_to_equity'], 'revenue_growth': funda_dict['revenue_growth']}
-        risk_for_score = {'f_score': f_score, 'z_score': z_score}
+        risk_metrics = {'f_score': f_score, 'z_score': z_score, 'm_score': m_score}
         
-        score_fund = get_fundamental_score(ratios_for_score, risk_for_score)
-        score_risk = get_risk_score(ratios_for_score, risk_for_score)
+        score_fund = get_fundamental_score(ratios_for_score, risk_metrics)
+        score_risk = get_risk_score(ratios_for_score, risk_metrics)
         
-        # --- NEW: Calculate News Sentiment ---
+        # Add to dictionary for Rules Engine
+        funda_dict['piotroski_f_score'] = f_score
+        funda_dict['altman_z_score'] = z_score
+        funda_dict['beneish_m_score'] = m_score
+        
+        # News
         score_news = analyze_news_sentiment(ticker)
-        print(f"ASTRA: News Sentiment for {ticker}: {score_news}")
-        # -------------------------------------
-        
-        # --- 5. AI & VERDICT ---
+        print(f"ASTRA: News Sentiment: {score_news}, F-Score: {f_score}, Z-Score: {z_score}")
+
+        # 3. AI & VERDICT
         ai_df = data_with_ta.reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
         prophet_model, forecast = train_prophet_model(ai_df, ticker)
         rf_model, confidence = train_classifier_model(ai_df, ticker)
@@ -88,16 +91,13 @@ def process_one_stock(ticker, db):
         latest = data_with_ta.iloc[-1]
         atr_val = latest.get('atr', latest['Close']*0.02)
 
-        # --- FIX: Pass sentiment_score to analyze_stock ---
         analysis = analyze_stock(
             ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
             float(latest['ema_50']), float(atr_val),
-            float(confidence), forecast, funda_dict, 
-            float(score_news) # <--- THIS WAS MISSING
+            float(confidence), forecast, funda_dict, float(score_news)
         )
-        # --------------------------------------------------
 
-        # --- 6. SAVE EVERYTHING ---
+        # 4. SAVE
         existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
         data_dict = {
             "company_name": info.get('longName', ticker),
@@ -105,12 +105,10 @@ def process_one_stock(ticker, db):
             "market_cap": float(info.get('marketCap', 0)), "pe_ratio": float(info.get('trailingPE', 0)),
             "eps": float(info.get('trailingEps', 0)), "beta": float(info.get('beta', 0)),
             
+            # NEW METRICS
             "roe": float(funda_dict['roe']), "debt_to_equity": float(funda_dict['debt_to_equity']),
             "free_cash_flow": float(funda_dict['free_cash_flow']), "revenue_growth": float(funda_dict['revenue_growth']),
-            
-            "piotroski_f_score": int(f_score), "altman_z_score": float(z_score),
-            "score_fundamental": float(score_fund), "score_risk": float(score_risk), 
-            "news_sentiment": float(score_news), # Save to DB
+            "piotroski_f_score": int(f_score), "altman_z_score": float(z_score), "beneish_m_score": float(m_score),
             
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
@@ -131,8 +129,6 @@ def process_one_stock(ticker, db):
     except Exception as e:
         db.rollback()
         print(f"ASTRA: ERROR {ticker}: {e}")
-        if "429" in str(e):
-            time.sleep(60)
         return False
 
 @app.task(name="astra.run_nightly_update")
@@ -141,9 +137,7 @@ def run_nightly_update():
     db = SessionLocal()
     for ticker in NIFTY50_TICKERS:
         process_one_stock(ticker, db)
-        delay = random.uniform(2.0, 5.0)
-        print(f"ASTRA: Sleeping {delay:.2f}s...")
-        time.sleep(delay)
+        time.sleep(random.uniform(2.0, 5.0))
     db.close()
     print("ASTRA: Nightly update complete.")
     return "Success"

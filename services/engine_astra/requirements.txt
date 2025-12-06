@@ -10,5 +10,7 @@ scikit-learn
 alembic
 requests
 lxml
-torch --index-url https://download.pytorch.org/whl/cpu  # Use CPU version to keep image smaller
+torch --index-url https://download.pytorch.org/whl/cpu
 transformers
+vaderSentiment
+textblob

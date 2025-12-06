@@ -11,4 +11,3 @@ vaderSentiment
 textblob
 requests
 lxml
-transformers

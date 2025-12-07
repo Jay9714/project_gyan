@@ -124,7 +124,7 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
 
 
-# --- UPDATED SCREENER LOGIC (Fixes 404 Error) ---
+# --- UPDATED SCREENER LOGIC (MAX POWER: Includes STRONG BUY) ---
 @app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
 def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     """
@@ -152,10 +152,9 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     else:
         raise HTTPException(status_code=400, detail=f"Invalid horizon '{horizon}'. Use: short, mid, long")
 
-    # 2. Query DB: Filter by 'BUY' verdict and Sort by AI Confidence
-    # We look for 'BUY' or 'ACCUMULATE'
+    # 2. Query DB: Filter by 'BUY', 'ACCUMULATE', and now 'STRONG BUY'
     results = db.query(FundamentalData).filter(
-        verdict_col.in_(['BUY', 'ACCUMULATE'])
+        verdict_col.in_(['BUY', 'ACCUMULATE', 'STRONG BUY'])
     ).order_by(FundamentalData.ai_confidence.desc()).limit(20).all()
     
     screener_data = []

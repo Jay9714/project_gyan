@@ -55,6 +55,10 @@ class FundamentalData(Base):
     ai_reasoning = Column(String)
     last_updated = Column(Date)
 
+    # --- NEW: MAX POWER COLUMNS ---
+    predicted_close = Column(Float)  # From Stacking Regressor
+    ensemble_score = Column(Float)   # Composite Score
+
 def create_db_and_tables():
     try:
         Base.metadata.create_all(bind=engine)

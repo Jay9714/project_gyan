@@ -23,20 +23,42 @@ REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
 app.conf.task_default_queue = 'astra_q'
 
+def fetch_ticker_data_with_retry(ticker, retries=3):
+    """Robust fetcher to handle Yahoo Finance network errors."""
+    for i in range(retries):
+        try:
+            t = yf.Ticker(ticker)
+            # Just accessing .info or .history forces a request
+            _ = t.info 
+            return t
+        except Exception as e:
+            if i == retries - 1:
+                print(f"ASTRA: Failed to fetch {ticker} after {retries} attempts: {e}")
+                return None
+            time.sleep(2) # Wait 2s before retry
+    return None
+
 def process_one_stock(ticker, db):
     print(f"ASTRA: Processing {ticker}...")
     try:
-        t = yf.Ticker(ticker)
+        # 1. FETCH DATA (With Retry)
+        t = fetch_ticker_data_with_retry(ticker)
+        if not t: return False
         
-        # 1. PRICE DATA
+        # 2. PRICE DATA
         data = t.history(period="2y", interval="1d", auto_adjust=False)
-        if data.empty: return False
+        if data.empty: 
+            print(f"ASTRA: No price data found for {ticker}")
+            return False
+            
         data_with_ta = add_ta_features(data)
         
         # Save History
         stock_records = []
         for index, row in data_with_ta.iterrows():
-            if pd.isna(row['Open']): continue
+            # Check for valid data
+            if pd.isna(row['Open']) or pd.isna(row['Close']): continue
+            
             stock_records.append({
                 "ticker": ticker, "date": index.date(),
                 "open": float(row['Open']), "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close']),
@@ -55,24 +77,28 @@ def process_one_stock(ticker, db):
             stmt = stmt.on_conflict_do_update(index_elements=['ticker', 'date'], set_=update_dict)
             db.execute(stmt)
 
-        # 2. FUNDAMENTALS & RISK (The Upgrade)
+        # 3. FUNDAMENTALS & RISK
         fin = t.financials
         bal = t.balance_sheet
         cf = t.cashflow
         info = t.info
         
-        # Calculate new metrics
+        # Calculate metrics
         f_score = calculate_piotroski_f_score(t)
         z_score = altman_z_score(fin, bal, info.get('marketCap', 0))
         m_score = beneish_m_score(fin, bal, cf)
         funda_dict = compute_fundamental_ratios(t)
         
-        # Scoring
+        # Calculate Component Scores
         ratios_for_score = {'roe': funda_dict['roe'], 'debt_to_equity': funda_dict['debt_to_equity'], 'revenue_growth': funda_dict['revenue_growth']}
         risk_metrics = {'f_score': f_score, 'z_score': z_score, 'm_score': m_score}
         
         score_fund = get_fundamental_score(ratios_for_score, risk_metrics)
         score_risk = get_risk_score(ratios_for_score, risk_metrics)
+        score_tech = 50.0 # Placeholder, calculation can be added to technical_analysis.py if needed
+        score_growth = 50.0 
+        if funda_dict['revenue_growth'] > 0.15: score_growth = 80.0
+        elif funda_dict['revenue_growth'] > 0.05: score_growth = 60.0
         
         # Add to dictionary for Rules Engine
         funda_dict['piotroski_f_score'] = f_score
@@ -83,7 +109,7 @@ def process_one_stock(ticker, db):
         score_news = analyze_news_sentiment(ticker)
         print(f"ASTRA: News Sentiment: {score_news}, F-Score: {f_score}, Z-Score: {z_score}")
 
-        # 3. AI & VERDICT
+        # 4. AI & VERDICT
         ai_df = data_with_ta.reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
         prophet_model, forecast = train_prophet_model(ai_df, ticker)
         rf_model, confidence = train_classifier_model(ai_df, ticker)
@@ -97,19 +123,27 @@ def process_one_stock(ticker, db):
             float(confidence), forecast, funda_dict, float(score_news)
         )
 
-        # 4. SAVE
+        # 5. SAVE TO DB
         existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
+        
+        # FIX: Removed 'roe', 'debt_to_equity', etc. as they were dropped from DB
         data_dict = {
             "company_name": info.get('longName', ticker),
             "sector": info.get('sector', 'Unknown'), "industry": info.get('industry', 'Unknown'),
             "market_cap": float(info.get('marketCap', 0)), "pe_ratio": float(info.get('trailingPE', 0)),
             "eps": float(info.get('trailingEps', 0)), "beta": float(info.get('beta', 0)),
             
-            # NEW METRICS
-            "roe": float(funda_dict['roe']), "debt_to_equity": float(funda_dict['debt_to_equity']),
-            "free_cash_flow": float(funda_dict['free_cash_flow']), "revenue_growth": float(funda_dict['revenue_growth']),
-            "piotroski_f_score": int(f_score), "altman_z_score": float(z_score), "beneish_m_score": float(m_score),
+            # Risk & Scores
+            "piotroski_f_score": int(f_score), 
+            "altman_z_score": float(z_score), 
+            "beneish_m_score": float(m_score),
+            "score_fundamental": float(score_fund),
+            "score_technical": float(score_tech),
+            "score_growth": float(score_growth),
+            "score_risk": float(score_risk),
+            "score_news": float(score_news),
             
+            # Predictions
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),

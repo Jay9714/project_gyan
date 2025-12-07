@@ -11,3 +11,4 @@ vaderSentiment
 textblob
 requests
 lxml
+PyPortfolioOpt

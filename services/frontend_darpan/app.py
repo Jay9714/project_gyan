@@ -105,13 +105,11 @@ with tab1:
 with tab2:
     st.header("AI Stock Screener")
     
-    # --- FIX: Added Mid Term here ---
     horizon_map = {
         "Short Term (14 Days)": "short",
         "Mid Term (60 Days)": "mid",
         "Long Term (1 Year)": "long"
     }
-    # -------------------------------
     
     selected_horizon_label = st.radio("Select Investment Horizon", list(horizon_map.keys()), horizontal=True)
     selected_horizon = horizon_map[selected_horizon_label]
@@ -159,11 +157,17 @@ with tab2:
 # --- TAB 3: PORTFOLIO ---
 with tab3:
     st.header("My Portfolio Intelligence")
-    if st.button("Refresh Portfolio"):
-        if not os.path.exists('portfolio.json'): st.warning("portfolio.json not found.")
-        else:
+    
+    col_a, col_b = st.columns([1, 4])
+    refresh = col_a.button("Refresh Portfolio")
+    optimize = col_b.button("🤖 AI Optimize (Max Sharpe Ratio)", type="primary")
+
+    if not os.path.exists('portfolio.json'): st.warning("portfolio.json not found.")
+    else:
+        with open('portfolio.json', 'r') as f: holdings = json.load(f)
+
+        if refresh:
             try:
-                with open('portfolio.json', 'r') as f: holdings = json.load(f)
                 portfolio_list = []
                 total_invested = 0
                 total_value = 0
@@ -212,3 +216,31 @@ with tab3:
                         "Target": "{:.2f}", "Stop Loss": "{:.2f}"
                     }), use_container_width=True)
             except Exception as e: st.error(f"Error: {e}")
+            
+        if optimize:
+            with st.spinner("Running Quant Optimization Models..."):
+                try:
+                    res = requests.post(f"{API_URL}/portfolio/optimize", json=holdings)
+                    if res.status_code == 200:
+                        opt_data = res.json()
+                        st.subheader("🤖 AI Suggested Rebalancing")
+                        
+                        perf = opt_data.get('performance', [])
+                        if perf:
+                             st.info(f"Expected Annual Return: {perf[0]*100:.1f}% | Volatility: {perf[1]*100:.1f}% | Sharpe Ratio: {perf[2]:.2f}")
+                        
+                        suggestions = opt_data.get('suggestions', [])
+                        if suggestions:
+                            df_opt = pd.DataFrame(suggestions)
+                            st.dataframe(
+                                df_opt[['ticker', 'current_qty', 'suggested_qty', 'action', 'weight']].style.format({
+                                    "weight": "{:.1f}%"
+                                }),
+                                use_container_width=True
+                            )
+                        else:
+                            st.warning("Optimization failed or no changes needed.")
+                    else:
+                        st.error(f"Optimization Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection Error: {e}")

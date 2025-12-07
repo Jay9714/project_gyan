@@ -3,7 +3,8 @@ FROM python:3.11-slim
 RUN useradd -m appuser
 WORKDIR /app
 
-COPY requirements.txt .
+# --- FIX: Point to the specific requirements file, not the root one ---
+COPY services/api_setu/requirements.txt .
 
 # --- OPTIMIZED INSTALLATION ---
 # 1. Upgrade pip

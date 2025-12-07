@@ -15,7 +15,10 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     def get_pred(days):
         try: return prophet_forecast.iloc[days]['yhat']
         except: return current_price
-    st_target = get_pred(14); mt_target = get_pred(60); lt_target = get_pred(365)
+        
+    st_target = get_pred(14)
+    mt_target = get_pred(60) 
+    lt_target = get_pred(365)
     
     # Risk Scores
     f_score = fundamentals.get('piotroski_f_score', 5)
@@ -56,25 +59,37 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     if sentiment_score > 0.2: score += 2
     elif sentiment_score < -0.2: score -= 2
 
-    # Verdict
+    # --- UPDATED VERDICT LOGIC ---
     def get_verdict(term_score, target, price):
+        # Calculate potential percentage change
         upside = ((target - price) / price) * 100
         
-        # Hard Vetoes
+        # 1. Hard Vetoes (Bankruptcy/Fraud)
         if z_score < 1.8: return "AVOID" 
         if m_score > -1.78: return "AVOID"
         
+        # 2. Momentum Override
         if using_momentum_target:
              if term_score >= 2: return "BUY"
              return "ACCUMULATE"
 
-        if target < price: return "HOLD"
+        # 3. SELL Logic (The Fix)
+        # If target is lower than price...
+        if target < price:
+            # If the drop is significant (> 2%), it is a SELL
+            if upside < -2.0: return "SELL"
+            # If it's a minor drop (0% to -2%), we can HOLD/WATCH
+            return "HOLD"
         
+        # 4. BUY Logic
+        if upside > 15 and term_score >= 4: return "STRONG BUY"
         if upside > 5 and term_score >= 3.5: return "BUY"
         if term_score >= 2: return "ACCUMULATE"
+        
+        # Default
         return "HOLD"
 
-    # ... (Final Calculation same as before) ...
+    # ... (Final Calculation) ...
     st_verdict = get_verdict(score + (0.2 * ai_confidence * 100), st_target, current_price)
     mt_verdict = get_verdict(score + 1.0, mt_target, current_price)
     lt_verdict = get_verdict(score, lt_target, current_price)

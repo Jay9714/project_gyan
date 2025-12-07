@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from shared.database import get_db, FundamentalData, StockData
 from schemas import AnalysisResponse, ScreenerResponse
@@ -9,8 +9,10 @@ import pandas as pd
 from datetime import date
 import os
 from celery import Celery
+from typing import List, Dict, Any
 
-# NOTE: We do NOT import news_analysis here to avoid heavy dependencies in the API.
+# --- NEW IMPORT ---
+from shared.portfolio_opt import get_portfolio_optimization
 
 app = FastAPI(title="Setu API - Project Gyan")
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
@@ -187,3 +189,23 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
         })
         
     return screener_data
+
+# --- NEW: Portfolio Optimization Endpoint ---
+@app.post("/portfolio/optimize")
+def optimize_user_portfolio(portfolio: List[Dict[str, Any]] = Body(...)):
+    """
+    Receives portfolio JSON, runs Max Sharpe Ratio optimization.
+    """
+    try:
+        # Calculate total current value
+        total_val = 0
+        for item in portfolio:
+            # We use buy_price if current is unknown, but ideally we fetch latest
+            # For simplicity, we assume frontend passed fresh data or we fetch in shared function
+            # The shared function fetches fresh prices, so we just need total estimated investment capability
+            total_val += (item.get('buy_price', 0) * item.get('quantity', 0))
+            
+        result = get_portfolio_optimization(portfolio, total_val)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

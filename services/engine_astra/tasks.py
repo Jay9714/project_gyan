@@ -74,14 +74,18 @@ def process_one_stock(ticker, db):
             db.execute(stmt)
 
         # 3. FUNDAMENTALS & RISK
-        fin = t.financials; bal = t.balance_sheet; cf = t.cashflow; info = t.info
+        fin = t.financials
+        bal = t.balance_sheet
+        cf = t.cashflow
+        info = t.info
         
+        # Calculate metrics
         f_score = calculate_piotroski_f_score(t)
         z_score = altman_z_score(fin, bal, info.get('marketCap', 0))
         m_score = beneish_m_score(fin, bal, cf)
         funda_dict = compute_fundamental_ratios(t)
         
-        # Component Scores
+        # Calculate Component Scores
         ratios_for_score = {'roe': funda_dict['roe'], 'debt_to_equity': funda_dict['debt_to_equity'], 'revenue_growth': funda_dict['revenue_growth']}
         risk_metrics = {'f_score': f_score, 'z_score': z_score, 'm_score': m_score}
         
@@ -104,10 +108,12 @@ def process_one_stock(ticker, db):
         latest_rsi = data_with_ta['rsi'].iloc[-1]
         if 40 <= latest_rsi <= 70: comp_score += 30
 
+        # Add to dictionary for Rules Engine
         funda_dict['piotroski_f_score'] = f_score
         funda_dict['altman_z_score'] = z_score
         funda_dict['beneish_m_score'] = m_score
         
+        # News
         score_news = analyze_news_sentiment(ticker)
         print(f"ASTRA: News Sentiment: {score_news}, F-Score: {f_score}, Z-Score: {z_score}")
 
@@ -117,14 +123,19 @@ def process_one_stock(ticker, db):
         rf_model, confidence = train_classifier_model(ai_df, ticker)
         
         features = ['open','high','low','close','volume','rsi','macd','atr','ema_50','bb_u','bb_l','momentum_7','vol_spike','close_lag_1','close_lag_2','close_lag_3','close_lag_5']
+        
         stack_model, stack_rmse = train_ensemble_model(ai_df, ticker, horizon=1)
+        
+        # --- FIX: Convert Return to Price for DB ---
         last_row = ai_df.iloc[[-1]][features].fillna(0)
-        predicted_close = float(stack_model.predict(last_row)[0]) if stack_model else float(ai_df['close'].iloc[-1])
+        predicted_return = float(stack_model.predict(last_row)[0]) if stack_model else 0.0
+        current_close = float(ai_df['close'].iloc[-1])
+        predicted_close = current_close * (1 + predicted_return)
+        # -------------------------------------------
 
         latest = data_with_ta.iloc[-1]
         atr_val = latest.get('atr', latest['Close']*0.02)
         
-        # --- PASS SECTOR HERE ---
         sector = info.get('sector', 'Unknown')
 
         analysis = analyze_stock(
@@ -133,7 +144,7 @@ def process_one_stock(ticker, db):
             float(confidence), forecast, 
             {**funda_dict, 'piotroski_f_score': f_score, 'altman_z_score': z_score, 'beneish_m_score': m_score}, 
             float(score_news),
-            sector=sector # <--- UPDATED
+            sector=sector
         )
 
         # 5. SAVE TO DB
@@ -145,15 +156,25 @@ def process_one_stock(ticker, db):
             "market_cap": float(info.get('marketCap', 0)), "pe_ratio": float(info.get('trailingPE', 0)),
             "eps": float(info.get('trailingEps', 0)), "beta": float(info.get('beta', 0)),
             
-            "piotroski_f_score": int(f_score), "altman_z_score": float(z_score), "beneish_m_score": float(m_score),
-            "score_fundamental": float(score_fund), "score_technical": float(score_tech),
-            "score_growth": float(score_growth), "score_risk": float(score_risk), "score_news": float(score_news),
+            # Risk & Scores
+            "piotroski_f_score": int(f_score), 
+            "altman_z_score": float(z_score), 
+            "beneish_m_score": float(m_score),
+            "score_fundamental": float(score_fund),
+            "score_technical": float(score_tech),
+            "score_growth": float(score_growth),
+            "score_risk": float(score_risk),
+            "score_news": float(score_news),
             
+            # Predictions
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
             "ai_reasoning": analysis['reasoning'], "ai_confidence": float(analysis['ai_confidence']), 
-            "predicted_close": predicted_close, "ensemble_score": float(comp_score),
+            
+            "predicted_close": predicted_close,
+            "ensemble_score": float(comp_score),
+            
             "last_updated": datetime.now().date()
         }
         

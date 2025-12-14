@@ -108,13 +108,14 @@ def train_classifier_model(df, ticker):
 
 def train_ensemble_model(df, ticker, horizon=1):
     """
-    Trains a Stacking Regressor (Ensemble) to predict future price.
-    Target: Close price shifted forward by 'horizon' days.
+    Trains a Stacking Regressor (Ensemble) to predict % RETURN (not raw price).
+    Target: (Next_Close - Current_Close) / Current_Close
     """
     data = df.copy()
     
-    # 1. Create Target (Price prediction 'horizon' days ahead)
-    data['Target'] = data['close'].shift(-horizon)
+    # --- Predict Returns, not Price ---
+    # Target = (Next_Close - Current_Close) / Current_Close
+    data['Target'] = (data['close'].shift(-horizon) - data['close']) / data['close']
     
     # 2. Prepare Data
     features = [f for f in ENSEMBLE_FEATURES if f in data.columns]

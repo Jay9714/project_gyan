@@ -25,6 +25,10 @@ st.markdown("""
     .buy { color: #00C853; }
     .sell { color: #D50000; }
     .hold { color: #FFD600; }
+    /* WAITING STATE STYLE */
+    .waiting { color: #29B6F6; animation: blinker 1.5s linear infinite; }
+    @keyframes blinker { 50% { opacity: 0.5; } }
+    
     .metric-row { display: flex; justify-content: space-between; margin-top: 10px; }
     .metric-label { font-size: 13px; color: #aaa; }
     .metric-val { font-size: 16px; font-weight: bold; color: #fff; }
@@ -36,14 +40,22 @@ st.title("🔮 Project Gyan: AI Investment System")
 
 def safe_format(value, fmt="{:.2f}", default="N/A"):
     if value is None: return default
+    if value == 0.0: return "---"
     return fmt.format(value)
 
 def display_horizon_card(title, data):
     if not data: return
     verdict = data.get('verdict', 'N/A')
-    color_class = "buy" if verdict == "BUY" else "sell" if verdict == "SELL" else "hold"
+    
+    # CSS Selection
+    color_class = "hold"
+    if verdict in ["BUY", "STRONG BUY"]: color_class = "buy"
+    elif verdict == "SELL": color_class = "sell"
+    elif verdict == "WAITING": color_class = "waiting"
+    
     target = data.get('target')
     sl = data.get('sl')
+    
     st.markdown(f"""
     <div class="card">
         <div class="card-title">{title}</div>
@@ -85,8 +97,14 @@ with tab1:
                     m1.metric("Current Price", f"₹{safe_format(data.get('current_price'))}")
                     m2.metric("Sector", data.get('sector', 'N/A'))
                     source = data.get('source', 'Unknown')
-                    if source == 'database': m3.success("Source: Nightly Engine (Deep)")
-                    else: m3.warning("Source: Live (Instant/Basic)")
+                    
+                    if source == 'database': 
+                        m3.success("Source: Deep Analysis (Ready)")
+                    else: 
+                        m3.warning("Source: Live Fetch (Processing...)")
+                        # Explicit user instruction
+                        st.info("ℹ️ **New Stock Detected:** Full analysis has started in the background. Please wait 30-60 seconds and click 'Analyze Stock' again for the final verdict.")
+                        
                     st.divider()
                     c1, c2, c3 = st.columns(3)
                     with c1: display_horizon_card("Short Term (2 Weeks)", data.get('st', {}))

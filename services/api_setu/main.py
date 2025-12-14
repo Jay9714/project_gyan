@@ -96,21 +96,23 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         rsi = rsi_series.iloc[-1]
         ema = ema_series.iloc[-1]
         
-        # Simple Logic
-        verdict = "BUY" if rsi < 40 and current > ema else "SELL" if rsi > 70 else "HOLD"
+        # --- CRITICAL FIX: DO NOT GUESS. WAIT. ---
+        # We return a special "WAITING" status so the UI knows to tell the user to hold on.
+        verdict = "WAITING"
         
         return {
             "ticker": ticker,
             "company_name": t.info.get('longName', ticker),
             "sector": t.info.get('sector', "Unknown"),
             "current_price": current,
-            "st": {"verdict": verdict, "target": current * 1.05, "sl": current * 0.95},
-            "mt": {"verdict": verdict, "target": current * 1.10, "sl": current * 0.90},
-            "lt": {"verdict": verdict, "target": current * 1.20, "sl": current * 0.85},
+            "st": {"verdict": verdict, "target": 0.0, "sl": 0.0},
+            "mt": {"verdict": verdict, "target": 0.0, "sl": 0.0},
+            "lt": {"verdict": verdict, "target": 0.0, "sl": 0.0},
             "verdict": verdict,
-            "confidence": 0.5, # 50% for basic analysis
-            "target_price": current * 1.10,
-            "reasoning": f"Instant Analysis (Deep analysis running in background). RSI={rsi:.1f}",
+            "confidence": 0.0, 
+            "target_price": 0.0,
+            # Explicit Warning in the Reasoning field
+            "reasoning": "⚡ **ANALYSIS IN PROGRESS...**\n\nThe AI is currently crunching 2 years of data, balance sheets, and risk models. This takes about 30-60 seconds.\n\n**PLEASE WAIT AND REFRESH** to get the true Deep Analysis. Do not trade yet.",
             "last_updated": date.today(),
             "rsi": rsi,
             "macd": 0.0,

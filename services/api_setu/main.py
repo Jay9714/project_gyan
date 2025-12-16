@@ -96,8 +96,8 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         rsi = rsi_series.iloc[-1]
         ema = ema_series.iloc[-1]
         
-        # --- CRITICAL FIX: DO NOT GUESS. WAIT. ---
-        # We return a special "WAITING" status so the UI knows to tell the user to hold on.
+        # --- HONEST MODE: DO NOT GUESS ---
+        # Instead of guessing HOLD/BUY, we return WAITING.
         verdict = "WAITING"
         
         return {
@@ -111,7 +111,6 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
             "verdict": verdict,
             "confidence": 0.0, 
             "target_price": 0.0,
-            # Explicit Warning in the Reasoning field
             "reasoning": "⚡ **ANALYSIS IN PROGRESS...**\n\nThe AI is currently crunching 2 years of data, balance sheets, and risk models. This takes about 30-60 seconds.\n\n**PLEASE WAIT AND REFRESH** to get the true Deep Analysis. Do not trade yet.",
             "last_updated": date.today(),
             "rsi": rsi,
@@ -126,13 +125,12 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
 
 
-# --- UPDATED SCREENER LOGIC (MAX POWER: Includes STRONG BUY) ---
+# --- SCREENER LOGIC (Keep MAX POWER: Includes STRONG BUY) ---
 @app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
 def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     """
     Returns the TOP opportunities for a specific horizon (short/mid/long).
     """
-    # 1. Map horizon to database columns
     if horizon == "short":
         verdict_col = FundamentalData.st_verdict
         target_col = FundamentalData.st_target
@@ -154,7 +152,7 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     else:
         raise HTTPException(status_code=400, detail=f"Invalid horizon '{horizon}'. Use: short, mid, long")
 
-    # 2. Query DB: Filter by 'BUY', 'ACCUMULATE', and now 'STRONG BUY'
+    # Filter by 'BUY', 'ACCUMULATE', and 'STRONG BUY'
     results = db.query(FundamentalData).filter(
         verdict_col.in_(['BUY', 'ACCUMULATE', 'STRONG BUY'])
     ).order_by(FundamentalData.ai_confidence.desc()).limit(20).all()
@@ -162,11 +160,9 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     screener_data = []
     
     for r in results:
-        # Get Price for Upside Calc
         tech = db.query(StockData).filter(StockData.ticker == r.ticker).order_by(StockData.date.desc()).first()
         curr_price = tech.close if tech else 0.0
         
-        # Get dynamic target based on the chosen horizon
         tgt = getattr(r, target_col.name)
         sl = getattr(r, sl_col.name)
         vld_days = getattr(r, days_col.name) or default_days
@@ -191,19 +187,15 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
         
     return screener_data
 
-# --- NEW: Portfolio Optimization Endpoint ---
+# --- Portfolio Optimization Endpoint ---
 @app.post("/portfolio/optimize")
 def optimize_user_portfolio(portfolio: List[Dict[str, Any]] = Body(...)):
     """
     Receives portfolio JSON, runs Max Sharpe Ratio optimization.
     """
     try:
-        # Calculate total current value
         total_val = 0
         for item in portfolio:
-            # We use buy_price if current is unknown, but ideally we fetch latest
-            # For simplicity, we assume frontend passed fresh data or we fetch in shared function
-            # The shared function fetches fresh prices, so we just need total estimated investment capability
             total_val += (item.get('buy_price', 0) * item.get('quantity', 0))
             
         result = get_portfolio_optimization(portfolio, total_val)

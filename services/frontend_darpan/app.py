@@ -25,7 +25,7 @@ st.markdown("""
     .buy { color: #00C853; }
     .sell { color: #D50000; }
     .hold { color: #FFD600; }
-    /* WAITING STATE STYLE */
+    /* WAITING STATE STYLE (Blue Pulse) */
     .waiting { color: #29B6F6; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0.5; } }
     
@@ -119,7 +119,7 @@ with tab1:
                 else: st.error(f"Error: {res.text}")
             except Exception as e: st.error(f"Connection Error: {e}")
 
-# --- TAB 2: STOCK FINDER (FIXED) ---
+# --- TAB 2: STOCK FINDER ---
 with tab2:
     st.header("AI Stock Screener")
     

@@ -16,6 +16,16 @@ def setup_periodic_tasks(sender, **kwargs):
     """
     print("Chakra: Setting up nightly schedule...")
     
+    # 1. Update Sector Trends (Run at 1:00 AM)
+    # This ensures we know if sectors are Bullish/Bearish before analyzing individual stocks
+    sender.add_periodic_task(
+        crontab(hour=1, minute=0),
+        app.send_task.s("astra.run_sector_update", queue='astra_q'),
+        name='Run Sector Pulse Analysis'
+    )
+
+    # 2. Update Stocks (Run at 1:30 AM)
+    # Gives the sector task 30 mins to finish
     sender.add_periodic_task(
         crontab(hour=1, minute=0),
         app.send_task.s("astra.run_nightly_update", queue='astra_q'),

@@ -8,6 +8,7 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
 class StockData(Base):
     __tablename__ = "stock_data"
     id = Column(Integer, primary_key=True, index=True)
@@ -17,6 +18,7 @@ class StockData(Base):
     rsi = Column(Float); macd = Column(Float); macd_signal = Column(Float)
     ema_50 = Column(Float); ema_200 = Column(Float); atr = Column(Float)
     __table_args__ = (UniqueConstraint('ticker', 'date', name='_ticker_date_uc'),)
+
 
 class FundamentalData(Base):
     __tablename__ = "fundamental_data"
@@ -32,12 +34,12 @@ class FundamentalData(Base):
     eps = Column(Float)
     beta = Column(Float)
     
-    # --- NEW: Advanced Risk Metrics ---
+    # Advanced Risk Metrics
     piotroski_f_score = Column(Integer, default=5) # 0-9 (Higher is better)
     altman_z_score = Column(Float, default=3.0)    # >3 Safe, <1.8 Distress
     beneish_m_score = Column(Float, default=-2.0)  # > -1.78 Manipulator
     
-    # --- NEW: Component Scores (0-100) ---
+    # Component Scores (0-100)
     score_fundamental = Column(Float, default=50.0)
     score_technical = Column(Float, default=50.0)
     score_growth = Column(Float, default=50.0)
@@ -55,9 +57,19 @@ class FundamentalData(Base):
     ai_reasoning = Column(String)
     last_updated = Column(Date)
 
-    # --- NEW: MAX POWER COLUMNS ---
+    # MAX POWER COLUMNS
     predicted_close = Column(Float)  # From Stacking Regressor
     ensemble_score = Column(Float)   # Composite Score
+
+
+class SectorPerformance(Base):
+    __tablename__ = "sector_performance"
+    id = Column(Integer, primary_key=True, index=True)
+    sector_name = Column(String, unique=True, index=True) # e.g., "Nifty Bank"
+    trend_score = Column(Float) # 0-100 (Below 40 = Bearish, Above 60 = Bullish)
+    status = Column(String) # "BULLISH", "BEARISH", "NEUTRAL"
+    last_updated = Column(Date)
+
 
 def create_db_and_tables():
     try:
@@ -65,6 +77,7 @@ def create_db_and_tables():
         print("Database tables created/updated.")
     except Exception as e:
         print(f"Error creating database tables: {e}")
+
 
 def get_db():
     db = SessionLocal()

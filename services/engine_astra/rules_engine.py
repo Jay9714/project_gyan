@@ -8,7 +8,7 @@ def calculate_momentum_target(current_price, atr, term='short'):
     target = current_price + (atr * multiplier)
     return round(target, 2)
 
-def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score, sector="Unknown"):
+def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score, sector="Unknown", sector_status="NEUTRAL"):
     
     # --- 1. DATA PREP ---
     def get_pred(days):
@@ -74,80 +74,56 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     elif upside > 5 and score >= 3.5: verdict = "BUY"
     elif score >= 2: verdict = "ACCUMULATE"
 
-    # --- 6. RICH REASONING GENERATION (Markdown) ---
+    # --- 6. SECTOR OVERRIDE (PHASE 2 UPGRADE) ---
+    sector_downgrade = False
+    if verdict in ["BUY", "STRONG BUY"] and sector_status == "BEARISH":
+        verdict = "HOLD"
+        sector_downgrade = True
+
+    # --- 7. RICH REASONING GENERATION ---
     reasoning_lines = []
     
-    # A. Verdict Explanation
+    # Verdict Explain
     reasoning_lines.append(f"### 🎯 **Final Verdict: {verdict}**")
-    if verdict == "STRONG BUY":
-        reasoning_lines.append("The AI has high conviction. Significant upside potential (>15%) combined with strong fundamentals and technical momentum.")
+    if sector_downgrade:
+        reasoning_lines.append(f"⚠️ **Sector Warning:** While the stock looks good, the '{sector}' sector is currently **BEARISH**. We have downgraded the rating to **HOLD** to avoid fighting the trend.")
+    elif verdict == "STRONG BUY":
+        reasoning_lines.append("High conviction. Significant upside potential (>15%) combined with strong fundamentals.")
     elif verdict == "BUY":
-        reasoning_lines.append("Solid upside potential (>5%) supported by decent quality scores. A good entry point.")
+        reasoning_lines.append("Solid upside potential (>5%) supported by decent quality scores.")
     elif verdict == "ACCUMULATE":
-        reasoning_lines.append("Good fundamental stock currently in a dip or consolidation. Safe to accumulate slowly for the long term.")
+        reasoning_lines.append("Good stock in a dip. Safe to accumulate slowly.")
     elif verdict == "SELL":
-        reasoning_lines.append(f"**⚠️ Downside Alert:** The AI predicts a price drop of {upside:.1f}% in the short term. Profit booking advised.")
+        reasoning_lines.append(f"**⚠️ Downside Alert:** AI predicts a drop of {upside:.1f}%.")
     elif verdict == "AVOID":
-        reasoning_lines.append("**⛔ Red Flag:** Critical financial distress or accounting irregularities detected. Capital preservation is priority.")
+        reasoning_lines.append("**⛔ Red Flag:** Distress Risk detected.")
     elif verdict == "HOLD":
-        reasoning_lines.append("No clear directional signal. Price is predicted to remain flat or signals are conflicting. Wait for a breakout.")
+        reasoning_lines.append("No clear signal. Wait for breakout.")
 
-    # B. AI & Math
+    # AI & Math
     ai_msg = f"\n**🤖 AI Model Output:**\n"
-    if using_momentum_target:
-        ai_msg += f"- **Strategy:** Momentum Override (Trend Following)\n"
-    else:
-        ai_msg += f"- **Strategy:** Value/Growth Regression\n"
-    ai_msg += f"- **Target Price:** ₹{st_target} (vs Current ₹{current_price})\n"
-    ai_msg += f"- **Expected Return:** {upside:+.1f}%\n"
-    ai_msg += f"- **Confidence:** {ai_confidence*100:.0f}% (Based on historical accuracy)"
+    ai_msg += f"- **Target:** ₹{st_target} ({upside:+.1f}%)\n"
+    ai_msg += f"- **Confidence:** {ai_confidence*100:.0f}%"
     reasoning_lines.append(ai_msg)
 
-    # C. Sector Context
-    sec_msg = f"\n**🏢 Sector Analysis:**\n"
+    # Sector
+    sec_msg = f"\n**🏢 Sector Pulse:**\n"
+    status_icon = "🟢" if sector_status == "BULLISH" else "🔴" if sector_status == "BEARISH" else "⚪"
+    sec_msg += f"- **{sector}:** {status_icon} {sector_status}\n"
     if is_capital_intensive:
-        sec_msg += f"- **Sector:** {sector}\n"
-        sec_msg += f"- **Context:** Capital Intensive Sector. Standard debt/risk rules (like Altman Z-Score) have been **relaxed** to avoid false alarms."
-    else:
-        sec_msg += f"- **Sector:** {sector}\n"
-        sec_msg += f"- **Context:** Standard industry. Strict financial health checks applied."
+        sec_msg += f"- **Note:** Risk rules relaxed for this sector."
     reasoning_lines.append(sec_msg)
-
-    # D. Health Check
-    health_msg = f"\n**🩺 Health Check:**\n"
-    health_msg += f"- **Technical:** {'Bullish (Uptrend)' if is_uptrend else 'Bearish (Downtrend)'} | RSI: {rsi:.1f}\n"
-    health_msg += f"- **Quality (Piotroski):** {f_score}/9 ({'High' if f_score >= 7 else 'Low' if f_score <= 4 else 'Avg'})\n"
-    
-    if not ignore_z_score:
-        health_msg += f"- **Bankruptcy Risk (Z-Score):** {z_score:.2f} ({'Safe' if z_score > 2.0 else 'Risk'})\n"
-    else:
-        health_msg += f"- **Bankruptcy Risk:** N/A (Sector Exempt)\n"
-        
-    if m_score > -1.78:
-        health_msg += f"- **Accounting:** ⚠️ Possible Manipulation (M-Score: {m_score:.2f})"
-    else:
-        health_msg += f"- **Accounting:** Clean (M-Score: {m_score:.2f})"
-        
-    reasoning_lines.append(health_msg)
 
     final_reasoning = "\n".join(reasoning_lines)
 
-    # --- 7. RETURN ---
-    # Calc Targets
     st_sl = calculate_stop_loss(current_price, atr, 'short')
     mt_sl = calculate_stop_loss(current_price, atr, 'mid')
     lt_sl = calculate_stop_loss(current_price, atr, 'long')
 
-    # Assign verdicts to all timeframes based on the main verdict logic 
-    # (Simplified for consistency, can be split if needed)
-    st_verdict = verdict
-    mt_verdict = verdict 
-    lt_verdict = verdict 
-
     return {
-        "st": {"verdict": st_verdict, "target": round(st_target, 2), "sl": st_sl},
-        "mt": {"verdict": mt_verdict, "target": round(mt_target, 2), "sl": mt_sl},
-        "lt": {"verdict": lt_verdict, "target": round(lt_target, 2), "sl": lt_sl},
+        "st": {"verdict": verdict, "target": round(st_target, 2), "sl": st_sl},
+        "mt": {"verdict": verdict, "target": round(mt_target, 2), "sl": mt_sl},
+        "lt": {"verdict": verdict, "target": round(lt_target, 2), "sl": lt_sl},
         "reasoning": final_reasoning,
         "ai_confidence": ai_confidence
     }

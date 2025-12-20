@@ -34,7 +34,7 @@ services:
       - PYTHONPATH=/app
     volumes:
       - ./services/engine_astra:/app
-      - ./shared:/app/shared  # <-- THIS IS THE FIX
+      - ./shared:/app/shared 
     depends_on:
       - db
       - redis
@@ -48,7 +48,7 @@ services:
       - '8000:8000'
     volumes:
       - ./services/api_setu:/app
-      - ./shared:/app/shared  # <-- THIS IS THE FIX
+      - ./shared:/app/shared 
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -67,7 +67,7 @@ services:
     volumes:
       - ./services/engine_astra:/app
       - ./saved_models:/app/saved_models
-      - ./shared:/app/shared  # <-- THIS IS THE FIX
+      - ./shared:/app/shared 
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -77,6 +77,8 @@ services:
         condition: service_started
       migration:
         condition: service_completed_successfully
+      ollama:
+        condition: service_started
 
   chakra_scheduler:
     build:
@@ -85,7 +87,6 @@ services:
     container_name: gyan_chakra_scheduler
     volumes:
       - ./services/worker_chakra:/app
-      # Chakra doesn't strictly need shared code yet, but good for consistency
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -120,5 +121,21 @@ services:
     environment:
       - GENERIC_TIMEZONE=Asia/Kolkata
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gyan_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
 volumes:
   postgres_data:
+  ollama_data:

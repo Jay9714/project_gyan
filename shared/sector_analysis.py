@@ -5,21 +5,31 @@ from sqlalchemy.orm import Session
 from shared.database import SectorPerformance
 
 # Mapping of Yahoo Finance Tickers for Indian Sectors
+# Updated to remove broken indices and use reliable ones
 SECTOR_INDICES = {
+    # Core Sectors (High Reliability)
     "Banking": "^NSEBANK",
     "Auto": "^CNXAUTO",
-    "Financial Services": "^CNXFIN",
     "FMCG": "^CNXFMCG",
     "IT": "^CNXIT",
     "Media": "^CNXMEDIA",
     "Metal": "^CNXMETAL",
     "Pharma": "^CNXPHARMA",
     "PSU Bank": "^CNXPSUBANK",
-    "Private Bank": "^CNXPVTBANK",
     "Real Estate": "^CNXREALTY",
-    "Consumer Durables": "^CNXCONSUM",
     "Energy": "^CNXENERGY",
-    "Infra": "^CNXINFRA"
+    "Infra": "^CNXINFRA",
+    
+    # Validated Additional Sectors
+    "Financial Services": "NIFTY_FIN_SERVICE.NS", 
+    "Private Bank": "NIFTY_PVT_BANK.NS",        
+    
+    # Removed ^CNXHEALTH as it causes 404s. 
+    # Removed ^CNXSERVICE as it is often empty.
+    
+    # Broader Markets
+    "Nifty 50": "^NSEI",                        
+    "Nifty Next 50": "^NSMIDCP"                 
 }
 
 def update_sector_trends(db: Session):
@@ -34,7 +44,7 @@ def update_sector_trends(db: Session):
     for sector_name, ticker in SECTOR_INDICES.items():
         try:
             # Fetch 6 months of data
-            # auto_adjust=True fixes some data issues, multi_level_index=False flattens columns if possible
+            # auto_adjust=True fixes some data issues
             data = yf.download(ticker, period="6mo", interval="1d", progress=False, auto_adjust=True)
             
             # 1. Fix MultiIndex if present (yfinance v0.2+ often returns MultiIndex columns)
@@ -52,18 +62,14 @@ def update_sector_trends(db: Session):
                 continue
             
             # Ensure 'Close' column exists (case-insensitive check)
-            if 'Close' in data.columns:
-                close = data['Close']
-            elif 'close' in data.columns:
-                close = data['close']
-            else:
+            col_map = {c.lower(): c for c in data.columns}
+            if 'close' not in col_map:
                 print(f"SECTOR: Missing 'Close' column for {sector_name}")
                 continue
+                
+            close = data[col_map['close']].astype(float)
 
             # 3. Calculations
-            # Convert series to float to avoid type issues
-            close = close.astype(float)
-            
             sma_50 = close.rolling(window=50).mean().iloc[-1]
             sma_200 = close.rolling(window=200).mean().iloc[-1] if len(data) > 200 else sma_50
             current_price = close.iloc[-1]

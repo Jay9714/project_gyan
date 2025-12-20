@@ -18,6 +18,7 @@ from rules_engine import analyze_stock
 from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
 from shared.news_analysis import analyze_news_sentiment
 from shared.sector_analysis import update_sector_trends
+from chanakya_agent import generate_chanakya_reasoning # NEW IMPORT
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
@@ -123,8 +124,9 @@ def process_one_stock(ticker, db):
         latest = data_with_ta.iloc[-1]
         atr_val = latest.get('atr', latest['Close']*0.02)
         
+        # SECTOR CHECK
         sector_name = info.get('sector', 'Unknown')
-        sector_status = get_sector_status(db, sector_name) # Call the helper!
+        sector_status = get_sector_status(db, sector_name)
 
         analysis = analyze_stock(
             ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
@@ -132,8 +134,32 @@ def process_one_stock(ticker, db):
             float(confidence), forecast, 
             funda_dict, float(score_news),
             sector=sector_name,
-            sector_status=sector_status # Pass status to rules engine
+            sector_status=sector_status 
         )
+        
+        # --- PHASE 3: AGENTIC REASONING ---
+        summary = {
+            'sector': sector_name,
+            'sector_status': sector_status,
+            'trend': 'Bullish' if latest['Close'] > latest['ema_50'] else 'Bearish',
+            'quality': 'High' if f_score >= 7 else 'Low',
+            'risk': 'High' if z_score < 1.8 else 'Safe',
+            'target': analysis['st']['target']
+        }
+        
+        ai_narrative = generate_chanakya_reasoning(
+            ticker, 
+            analysis['st']['verdict'], 
+            analysis['ai_confidence'],
+            summary
+        )
+        
+        # Fallback if LLM fails
+        if "Chanakya is" in ai_narrative and len(ai_narrative) < 50:
+             final_reasoning = analysis['reasoning'] + f"\n\n**Agent Note:** {ai_narrative}"
+        else:
+             final_reasoning = ai_narrative
+        # ----------------------------------
 
         # 5. SAVE
         existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
@@ -147,7 +173,8 @@ def process_one_stock(ticker, db):
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
-            "ai_reasoning": analysis['reasoning'], "ai_confidence": float(analysis['ai_confidence']), 
+            "ai_reasoning": final_reasoning, # Replaces rule-based text
+            "ai_confidence": float(analysis['ai_confidence']), 
             "predicted_close": predicted_close, "ensemble_score": float(comp_score),
             "last_updated": datetime.now().date()
         }

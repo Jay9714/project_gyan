@@ -123,9 +123,8 @@ def process_one_stock(ticker, db):
         latest = data_with_ta.iloc[-1]
         atr_val = latest.get('atr', latest['Close']*0.02)
         
-        # SECTOR CHECK
         sector_name = info.get('sector', 'Unknown')
-        sector_status = get_sector_status(db, sector_name)
+        sector_status = get_sector_status(db, sector_name) # Call the helper!
 
         analysis = analyze_stock(
             ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
@@ -192,16 +191,13 @@ def run_nightly_update():
 def run_single_stock_update(ticker):
     print(f"ASTRA: Received on-demand request for {ticker}...")
     
-    # 1. Update Sectors FIRST (so we have context)
-    # This ensures the 'process_one_stock' function finds valid sector data
+    # 1. Update Sectors FIRST
     db = SessionLocal()
     try:
-        print("ASTRA: Refreshing Sector Trends for accurate context...")
         update_sector_trends(db)
     except Exception as e:
-        print(f"ASTRA: Warning - Sector update failed: {e}")
-    finally:
-        db.close()
+        print(f"ASTRA: Sector update warning: {e}")
+    db.close()
     
     # 2. Analyze the Stock
     db = SessionLocal()

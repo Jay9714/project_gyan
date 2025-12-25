@@ -25,7 +25,7 @@ st.markdown("""
     .buy { color: #00C853; }
     .sell { color: #D50000; }
     .hold { color: #FFD600; }
-    /* WAITING STATE STYLE (Blue Pulse) */
+    /* WAITING STATE STYLE */
     .waiting { color: #29B6F6; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0.5; } }
     
@@ -33,6 +33,12 @@ st.markdown("""
     .metric-label { font-size: 13px; color: #aaa; }
     .metric-val { font-size: 16px; font-weight: bold; color: #fff; }
     .reasoning-box { background-color: #262730; padding: 15px; border-left: 5px solid #4CAF50; margin-top: 20px; border-radius: 5px; }
+    
+    /* Top Picks Cards */
+    .top-pick-card { border: 1px solid #444; border-radius: 8px; padding: 15px; background: #222; text-align: center; }
+    .top-pick-rank { font-size: 12px; font-weight: bold; text-transform: uppercase; color: #FFD700; margin-bottom: 5px; }
+    .top-pick-ticker { font-size: 24px; font-weight: bold; color: #fff; }
+    .top-pick-upside { font-size: 18px; color: #00C853; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -44,7 +50,10 @@ def safe_format(value, fmt="{:.2f}", default="N/A"):
     return fmt.format(value)
 
 def display_horizon_card(title, data):
-    if not data: return
+    # Robust empty check for dicts/lists vs pandas objects
+    if data is None: return
+    if isinstance(data, (dict, list)) and not data: return
+    
     verdict = data.get('verdict', 'N/A')
     
     # CSS Selection
@@ -70,6 +79,28 @@ def display_horizon_card(title, data):
                 <div class="metric-val">₹{safe_format(sl)}</div>
             </div>
         </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def display_top_pick(rank, data, label="Top Pick"):
+    # Fix for ambiguous truth value error with pandas Series
+    if data is None: return
+    if isinstance(data, pd.Series) and data.empty: return
+    if isinstance(data, (dict, list)) and not data: return
+
+    upside = data.get('upside_pct', 0)
+    conf = data.get('confidence', 0) * 100
+    ticker = data.get('ticker')
+    
+    rank_color = "#FFD700" if rank == 1 else "#C0C0C0" if rank == 2 else "#CD7F32"
+    rank_text = "🥇 1st Choice" if rank == 1 else "🥈 2nd Choice" if rank == 2 else "🥉 3rd Choice"
+    
+    st.markdown(f"""
+    <div class="top-pick-card" style="border-top: 3px solid {rank_color};">
+        <div class="top-pick-rank" style="color: {rank_color};">{rank_text}</div>
+        <div class="top-pick-ticker">{ticker}</div>
+        <div class="top-pick-upside">+{upside:.1f}% Upside</div>
+        <div style="font-size:12px; color:#888; margin-top:5px;">AI Confidence: {conf:.0f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -102,7 +133,6 @@ with tab1:
                         m3.success("Source: Deep Analysis (Ready)")
                     else: 
                         m3.warning("Source: Live Fetch (Processing...)")
-                        # Explicit user instruction
                         st.info("ℹ️ **New Stock Detected:** Full analysis has started in the background. Please wait 30-60 seconds and click 'Analyze Stock' again for the final verdict.")
                         
                     st.divider()
@@ -119,7 +149,7 @@ with tab1:
                 else: st.error(f"Error: {res.text}")
             except Exception as e: st.error(f"Connection Error: {e}")
 
-# --- TAB 2: STOCK FINDER ---
+# --- TAB 2: STOCK FINDER (UPDATED) ---
 with tab2:
     st.header("AI Stock Screener")
     
@@ -141,29 +171,60 @@ with tab2:
                     opportunities = res.json()
                     if opportunities:
                         df = pd.DataFrame(opportunities)
+                        
+                        # --- NEW: Extract Sector Status Logic for Display ---
+                        # We try to infer if sector caused a downgrade from the reasoning text
+                        def get_sector_note(row):
+                            reasoning = str(row.get('reasoning', ''))
+                            if "Sector Warning" in reasoning:
+                                return "⚠️ Bearish Sector"
+                            return "✅ OK"
+                        
+                        df['Sector Status'] = df.apply(get_sector_note, axis=1)
+
+                        # Sort primarily by Confidence, secondary by Upside
+                        df = df.sort_values(by=['confidence', 'upside_pct'], ascending=[False, False])
+                        
+                        # --- TOP 3 DISPLAY ---
+                        st.subheader(f"🏆 Top 3 Picks for {selected_horizon_label}")
+                        top_cols = st.columns(3)
+                        
+                        for i in range(min(3, len(df))):
+                            row = df.iloc[i]
+                            with top_cols[i]:
+                                display_top_pick(i+1, row)
+                        
+                        # --- FULL TABLE ---
+                        st.divider()
+                        st.subheader("📋 All Opportunities")
+                        
                         df['confidence'] = df['confidence'] * 100
                         
+                        # Renaming and selecting columns for clean display
+                        # ADDED 'reasoning' back to the display columns
                         df_display = df[[
                             'ticker', 'company_name', 'current_price', 
-                            'verdict', 'upside_pct', 'target_price', 
+                            'verdict', 'Sector Status', 'upside_pct', 'target_price', 
                             'stop_loss', 'duration_days', 'confidence', 'reasoning'
                         ]]
                         
                         df_display.columns = [
                             "Ticker", "Company", "Price (₹)", 
-                            "Verdict", "Upside %", "Target (₹)", 
+                            "Verdict", "Sector", "Upside %", "Target (₹)", 
                             "Stop Loss (₹)", "Days", "Conf.", "Reasoning"
                         ]
                         
-                        st.success(f"Found {len(df)} Strong BUY signals for {selected_horizon_label}")
                         st.dataframe(
                             df_display.style.format({
                                 "Price (₹)": "{:.2f}", "Target (₹)": "{:.2f}", 
                                 "Stop Loss (₹)": "{:.2f}", "Upside %": "{:.2f}%", 
                                 "Conf.": "{:.1f}%", "Days": "{:.0f}"
-                            }),
+                            }).applymap(
+                                lambda x: "color: orange; font-weight: bold;" if "Bearish" in str(x) else "", 
+                                subset=['Sector']
+                            ),
                             use_container_width=True,
-                            height=500
+                            height=400
                         )
                     else:
                         st.info(f"No strong BUY signals found for {selected_horizon_label} today.")

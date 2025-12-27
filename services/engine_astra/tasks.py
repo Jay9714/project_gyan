@@ -18,7 +18,13 @@ from rules_engine import analyze_stock
 from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
 from shared.news_analysis import analyze_news_sentiment
 from shared.sector_analysis import update_sector_trends
-from chanakya_agent import generate_chanakya_reasoning # NEW IMPORT
+
+# Import the Chanakya Agent
+try:
+    from chanakya_agent import generate_chanakya_reasoning
+except ImportError:
+    # Fallback if file is missing during migration/build
+    def generate_chanakya_reasoning(*args, **kwargs): return "Chanakya Agent not found."
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
@@ -134,7 +140,7 @@ def process_one_stock(ticker, db):
             float(confidence), forecast, 
             funda_dict, float(score_news),
             sector=sector_name,
-            sector_status=sector_status 
+            sector_status=sector_status # Pass status to rules engine
         )
         
         # --- PHASE 3: AGENTIC REASONING ---
@@ -154,8 +160,8 @@ def process_one_stock(ticker, db):
             summary
         )
         
-        # Fallback if LLM fails
-        if "Chanakya is" in ai_narrative and len(ai_narrative) < 50:
+        # Fallback if LLM fails or returns error message
+        if "Chanakya is" in ai_narrative or "LLM Error" in ai_narrative:
              final_reasoning = analysis['reasoning'] + f"\n\n**Agent Note:** {ai_narrative}"
         else:
              final_reasoning = ai_narrative
@@ -173,7 +179,9 @@ def process_one_stock(ticker, db):
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
+            
             "ai_reasoning": final_reasoning, # Replaces rule-based text
+            
             "ai_confidence": float(analysis['ai_confidence']), 
             "predicted_close": predicted_close, "ensemble_score": float(comp_score),
             "last_updated": datetime.now().date()
@@ -218,13 +226,16 @@ def run_nightly_update():
 def run_single_stock_update(ticker):
     print(f"ASTRA: Received on-demand request for {ticker}...")
     
-    # 1. Update Sectors FIRST
+    # 1. Update Sectors FIRST (so we have context)
+    # This ensures the 'process_one_stock' function finds valid sector data
     db = SessionLocal()
     try:
+        print("ASTRA: Refreshing Sector Trends for accurate context...")
         update_sector_trends(db)
     except Exception as e:
-        print(f"ASTRA: Sector update warning: {e}")
-    db.close()
+        print(f"ASTRA: Warning - Sector update failed: {e}")
+    finally:
+        db.close()
     
     # 2. Analyze the Stock
     db = SessionLocal()

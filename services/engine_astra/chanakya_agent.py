@@ -1,8 +1,10 @@
 import requests
 import json
 
+# Ensure this matches the service name in docker-compose
 OLLAMA_URL = "http://ollama:11434/api/generate"
-MODEL_NAME = "llama3" # Ensure you pull this model: docker-compose exec ollama ollama pull llama3
+# Fallback model if specific version fails
+MODEL_NAME = "llama3" 
 
 def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary):
     """
@@ -32,12 +34,17 @@ def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary):
     }
     
     try:
-        # 30 second timeout to prevent hanging the worker
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
+        # INCREASED TIMEOUT TO 120 SECONDS
+        response = requests.post(OLLAMA_URL, json=payload, timeout=120)
+        
+        if response.status_code == 404:
+            return "Error: LLM Model 'llama3' not found. Run 'docker-compose exec ollama ollama pull llama3'."
+            
         if response.status_code == 200:
-            return response.json()['response'].strip()
-        else:
-            return f"Chanakya is silent (LLM Status: {response.status_code})."
+            return response.json().get('response', '').strip()
+            
+        return f"Chanakya is silent (LLM Status: {response.status_code})."
+        
     except Exception as e:
         print(f"LLM Error: {e}")
-        return "Chanakya is meditating (Connection Error or Model Loading)."
+        return f"Chanakya is meditating (Connection Error or Timeout: {str(e)})"

@@ -11,9 +11,6 @@ import os
 from celery import Celery
 from typing import List, Dict, Any
 
-# --- NEW IMPORT ---
-from shared.portfolio_opt import get_portfolio_optimization
-
 app = FastAPI(title="Setu API - Project Gyan")
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 celery_app = Celery('api_sender', broker=REDIS_URL)
@@ -125,7 +122,6 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
 
 
-# --- SCREENER LOGIC (Keep MAX POWER: Includes STRONG BUY) ---
 @app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
 def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
     """
@@ -186,19 +182,3 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
         })
         
     return screener_data
-
-# --- Portfolio Optimization Endpoint ---
-@app.post("/portfolio/optimize")
-def optimize_user_portfolio(portfolio: List[Dict[str, Any]] = Body(...)):
-    """
-    Receives portfolio JSON, runs Max Sharpe Ratio optimization.
-    """
-    try:
-        total_val = 0
-        for item in portfolio:
-            total_val += (item.get('buy_price', 0) * item.get('quantity', 0))
-            
-        result = get_portfolio_optimization(portfolio, total_val)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

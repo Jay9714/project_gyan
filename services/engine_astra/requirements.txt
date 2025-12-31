@@ -15,4 +15,3 @@ transformers
 vaderSentiment
 textblob
 xgboost
-PyPortfolioOpt

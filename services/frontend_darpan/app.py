@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import pandas as pd
-import json
 import os
 
 # Configure Page
@@ -25,7 +24,6 @@ st.markdown("""
     .buy { color: #00C853; }
     .sell { color: #D50000; }
     .hold { color: #FFD600; }
-    /* WAITING STATE STYLE */
     .waiting { color: #29B6F6; animation: blinker 1.5s linear infinite; }
     @keyframes blinker { 50% { opacity: 0.5; } }
     
@@ -34,7 +32,6 @@ st.markdown("""
     .metric-val { font-size: 16px; font-weight: bold; color: #fff; }
     .reasoning-box { background-color: #262730; padding: 15px; border-left: 5px solid #4CAF50; margin-top: 20px; border-radius: 5px; }
     
-    /* Top Picks Cards */
     .top-pick-card { border: 1px solid #444; border-radius: 8px; padding: 15px; background: #222; text-align: center; }
     .top-pick-rank { font-size: 12px; font-weight: bold; text-transform: uppercase; color: #FFD700; margin-bottom: 5px; }
     .top-pick-ticker { font-size: 24px; font-weight: bold; color: #fff; }
@@ -50,13 +47,11 @@ def safe_format(value, fmt="{:.2f}", default="N/A"):
     return fmt.format(value)
 
 def display_horizon_card(title, data):
-    # Robust empty check for dicts/lists vs pandas objects
     if data is None: return
     if isinstance(data, (dict, list)) and not data: return
     
     verdict = data.get('verdict', 'N/A')
     
-    # CSS Selection
     color_class = "hold"
     if verdict in ["BUY", "STRONG BUY"]: color_class = "buy"
     elif verdict == "SELL": color_class = "sell"
@@ -83,7 +78,6 @@ def display_horizon_card(title, data):
     """, unsafe_allow_html=True)
 
 def display_top_pick(rank, data, label="Top Pick"):
-    # Fix for ambiguous truth value error with pandas Series
     if data is None: return
     if isinstance(data, pd.Series) and data.empty: return
     if isinstance(data, (dict, list)) and not data: return
@@ -104,8 +98,8 @@ def display_top_pick(rank, data, label="Top Pick"):
     </div>
     """, unsafe_allow_html=True)
 
-# --- TABS ---
-tab1, tab2, tab3 = st.tabs(["🚀 Deep Analysis", "🔎 Stock Finder", "💼 Portfolio"])
+# --- TABS (Updated: Removed Portfolio) ---
+tab1, tab2 = st.tabs(["🚀 Deep Analysis", "🔎 Stock Finder"])
 
 # --- TAB 1: DEEP ANALYSIS ---
 with tab1:
@@ -149,7 +143,7 @@ with tab1:
                 else: st.error(f"Error: {res.text}")
             except Exception as e: st.error(f"Connection Error: {e}")
 
-# --- TAB 2: STOCK FINDER (UPDATED) ---
+# --- TAB 2: STOCK FINDER ---
 with tab2:
     st.header("AI Stock Screener")
     
@@ -172,8 +166,6 @@ with tab2:
                     if opportunities:
                         df = pd.DataFrame(opportunities)
                         
-                        # --- NEW: Extract Sector Status Logic for Display ---
-                        # We try to infer if sector caused a downgrade from the reasoning text
                         def get_sector_note(row):
                             reasoning = str(row.get('reasoning', ''))
                             if "Sector Warning" in reasoning:
@@ -181,27 +173,19 @@ with tab2:
                             return "✅ OK"
                         
                         df['Sector Status'] = df.apply(get_sector_note, axis=1)
-
-                        # Sort primarily by Confidence, secondary by Upside
                         df = df.sort_values(by=['confidence', 'upside_pct'], ascending=[False, False])
                         
-                        # --- TOP 3 DISPLAY ---
                         st.subheader(f"🏆 Top 3 Picks for {selected_horizon_label}")
                         top_cols = st.columns(3)
-                        
                         for i in range(min(3, len(df))):
                             row = df.iloc[i]
                             with top_cols[i]:
                                 display_top_pick(i+1, row)
                         
-                        # --- FULL TABLE ---
                         st.divider()
                         st.subheader("📋 All Opportunities")
-                        
                         df['confidence'] = df['confidence'] * 100
                         
-                        # Renaming and selecting columns for clean display
-                        # ADDED 'reasoning' back to the display columns
                         df_display = df[[
                             'ticker', 'company_name', 'current_price', 
                             'verdict', 'Sector Status', 'upside_pct', 'target_price', 
@@ -232,94 +216,3 @@ with tab2:
                     st.error(f"API Error: {res.status_code}")
             except Exception as e:
                 st.error(f"API Error: {e}")
-
-# --- TAB 3: PORTFOLIO ---
-with tab3:
-    st.header("My Portfolio Intelligence")
-    
-    col_a, col_b = st.columns([1, 4])
-    refresh = col_a.button("Refresh Portfolio")
-    optimize = col_b.button("🤖 AI Optimize (Max Sharpe Ratio)", type="primary")
-
-    if not os.path.exists('portfolio.json'): st.warning("portfolio.json not found.")
-    else:
-        with open('portfolio.json', 'r') as f: holdings = json.load(f)
-
-        if refresh:
-            try:
-                portfolio_list = []
-                total_invested = 0
-                total_value = 0
-                
-                with st.spinner("Analyzing..."):
-                    for item in holdings:
-                        try:
-                            res = requests.get(f"{API_URL}/analysis/{item['ticker']}")
-                            if res.status_code == 200:
-                                data = res.json()
-                                cur_price = data.get('current_price', 0) or 0
-                                
-                                mt_data = data.get('mt', {})
-                                target = mt_data.get('target', 0) if mt_data else 0
-                                verdict = mt_data.get('verdict', 'N/A') if mt_data else 'N/A'
-                                sl = mt_data.get('sl', 0) if mt_data else 0
-                                
-                                val = cur_price * item['quantity']
-                                inv = item['buy_price'] * item['quantity']
-                                pl = val - inv 
-                                
-                                total_invested += inv
-                                total_value += val
-                                
-                                portfolio_list.append({
-                                    "Ticker": item['ticker'],
-                                    "Qty": item['quantity'],
-                                    "Buy Price": item['buy_price'],
-                                    "Cur. Price": cur_price,
-                                    "P/L": round(val - inv, 2),
-                                    "Action (Mid-Term)": verdict,
-                                    "Target": target,
-                                    "Stop Loss": sl
-                                })
-                        except: pass
-                
-                c1, c2, c3 = st.columns(3)
-                pl = total_value - total_invested
-                c1.metric("Total Invested", f"₹{total_invested:,.0f}")
-                c2.metric("Current Value", f"₹{total_value:,.0f}")
-                c3.metric("Total P/L", f"₹{pl:,.0f}", delta=f"{(pl/total_invested)*100:.1f}%" if total_invested else "0%")
-                
-                if portfolio_list:
-                    st.dataframe(pd.DataFrame(portfolio_list).style.format({
-                        "Buy Price": "{:.2f}", "Cur. Price": "{:.2f}", "P/L": "{:.2f}", 
-                        "Target": "{:.2f}", "Stop Loss": "{:.2f}"
-                    }), use_container_width=True)
-            except Exception as e: st.error(f"Error: {e}")
-            
-        if optimize:
-            with st.spinner("Running Quant Optimization Models..."):
-                try:
-                    res = requests.post(f"{API_URL}/portfolio/optimize", json=holdings)
-                    if res.status_code == 200:
-                        opt_data = res.json()
-                        st.subheader("🤖 AI Suggested Rebalancing")
-                        
-                        perf = opt_data.get('performance', [])
-                        if perf:
-                             st.info(f"Expected Annual Return: {perf[0]*100:.1f}% | Volatility: {perf[1]*100:.1f}% | Sharpe Ratio: {perf[2]:.2f}")
-                        
-                        suggestions = opt_data.get('suggestions', [])
-                        if suggestions:
-                            df_opt = pd.DataFrame(suggestions)
-                            st.dataframe(
-                                df_opt[['ticker', 'current_qty', 'suggested_qty', 'action', 'weight']].style.format({
-                                    "weight": "{:.1f}%"
-                                }),
-                                use_container_width=True
-                            )
-                        else:
-                            st.warning("Optimization failed or no changes needed.")
-                    else:
-                        st.error(f"Optimization Error: {res.text}")
-                except Exception as e:
-                    st.error(f"Connection Error: {e}")

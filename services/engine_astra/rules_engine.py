@@ -8,7 +8,7 @@ def calculate_momentum_target(current_price, atr, term='short'):
     target = current_price + (atr * multiplier)
     return round(target, 2)
 
-def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score, sector="Unknown", sector_status="NEUTRAL"):
+def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score, sector="Unknown", sector_status="NEUTRAL", catalyst_score=0.0):
     
     # --- 1. DATA PREP ---
     def get_pred(days):
@@ -27,7 +27,7 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     capital_intensive_keywords = [
         'real estate', 'financial', 'banking', 'utilities', 
         'infrastructure', 'power', 'telecom', 'capital goods', 
-        'construction', 'insurance', 'nbfc', 'industrials'
+        'construction', 'insurance', 'nbfc', 'industrials', 'defense', 'aerospace'
     ]
     is_capital_intensive = any(keyword in str(sector).lower() for keyword in capital_intensive_keywords)
     ignore_z_score = True if is_capital_intensive else False
@@ -39,11 +39,6 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     is_safe = z_score > 1.8 or ignore_z_score
     
     using_momentum_target = False
-    if is_uptrend and is_positive_news and is_ai_bearish and is_safe:
-        using_momentum_target = True
-        st_target = calculate_momentum_target(current_price, atr, 'short')
-        mt_target = calculate_momentum_target(current_price, atr, 'mid')
-        lt_target = calculate_momentum_target(current_price, atr, 'long')
     
     # --- 4. SCORING ---
     score = 0
@@ -59,32 +54,59 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     
     if sentiment_score > 0.2: score += 2
     elif sentiment_score < -0.2: score -= 2
+    
+    # --- NEW: CATALYST INJECTION ---
+    # catalyst_score: 0 (None), 1 (Good), 2 (Mega/Strategic)
+    score += (catalyst_score * 2.5) # A Mega Catalyst adds +5 points, capable of flipping any verdict
 
     # --- 5. VERDICT GENERATION ---
     upside = ((st_target - current_price) / current_price) * 100
     
     verdict = "HOLD"
+    
+    # Override for Distress (Safety First)
     if not ignore_z_score and z_score < 1.8: verdict = "AVOID"
     elif m_score > -1.78: verdict = "AVOID"
-    elif using_momentum_target:
-         verdict = "BUY" if score >= 2 else "ACCUMULATE"
+    
+    # Catalyst Override
+    elif catalyst_score >= 2:
+        verdict = "STRONG BUY" # Force Buy on Mega Catalyst
+        using_momentum_target = True
+        
+    elif using_momentum_target or (is_uptrend and is_positive_news and is_ai_bearish and is_safe):
+        using_momentum_target = True
+        st_target = calculate_momentum_target(current_price, atr, 'short')
+        mt_target = calculate_momentum_target(current_price, atr, 'mid')
+        lt_target = calculate_momentum_target(current_price, atr, 'long')
+        verdict = "BUY" if score >= 2 else "ACCUMULATE"
+        
     elif st_target < current_price:
         verdict = "SELL" if upside < -2.0 else "HOLD"
+        
+        # Soft Catalyst Check: If we have a catalyst but math says SELL, force HOLD/ACCUMULATE
+        if catalyst_score >= 1 and verdict == "SELL":
+            verdict = "ACCUMULATE"
+            
     elif upside > 15 and score >= 4: verdict = "STRONG BUY"
     elif upside > 5 and score >= 3.5: verdict = "BUY"
     elif score >= 2: verdict = "ACCUMULATE"
 
-    # --- 6. SECTOR OVERRIDE (PHASE 2 UPGRADE) ---
+    # --- 6. SECTOR OVERRIDE ---
     sector_downgrade = False
     if verdict in ["BUY", "STRONG BUY"] and sector_status == "BEARISH":
-        verdict = "HOLD"
-        sector_downgrade = True
+        # Catalyst protects against Sector Downgrade
+        if catalyst_score < 2:
+            verdict = "HOLD"
+            sector_downgrade = True
 
     # --- 7. RICH REASONING GENERATION ---
     reasoning_lines = []
     
-    # Verdict Explain
     reasoning_lines.append(f"### 🎯 **Final Verdict: {verdict}**")
+    
+    if catalyst_score >= 2:
+        reasoning_lines.append("🚀 **Mega-Catalyst Detected:** Strategic inputs indicate massive future value unlocking, overriding short-term technicals.")
+    
     if sector_downgrade:
         reasoning_lines.append(f"⚠️ **Sector Warning:** While the stock looks good, the '{sector}' sector is currently **BEARISH**. We have downgraded the rating to **HOLD** to avoid fighting the trend.")
     elif verdict == "STRONG BUY":

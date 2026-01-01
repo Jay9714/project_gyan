@@ -6,21 +6,38 @@ OLLAMA_URL = "http://ollama:11434/api/generate"
 # Fallback model if specific version fails
 MODEL_NAME = "llama3" 
 
-def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary):
+def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, catalyst_context=None):
     """
     Uses Local LLM to generate a professional investment thesis.
+    NOW SUPPORTS: 'catalyst_context' - Strategic info that overrides math.
     """
+    
+    # 1. Base Prompt
     prompt = f"""
     You are Chanakya, a master financial strategist. Write a concise, 3-sentence investment thesis for {ticker}.
     
-    Data:
-    - Verdict: {verdict}
+    HARD DATA (Quantitative):
+    - Math Verdict: {verdict}
     - AI Confidence: {ai_confidence*100:.1f}%
     - Sector: {data_summary.get('sector', 'Unknown')} ({data_summary.get('sector_status', 'Neutral')})
     - Trend: {data_summary.get('trend', 'Neutral')}
     - Fundamentals: Quality={data_summary.get('quality', 'Avg')}, Risk={data_summary.get('risk', 'Avg')}
     - AI Target: {data_summary.get('target', 0)}
+    """
+
+    # 2. INJECT MEGA-CATALYST (Qualitative Override)
+    if catalyst_context:
+        prompt += f"""
+        
+        CRITICAL INTELLIGENCE (Override the Math if necessary):
+        - Mega-Catalyst: {catalyst_context}
+        
+        INSTRUCTION: If the 'Mega-Catalyst' implies massive future growth (e.g., huge order book, government policy), 
+        you MUST weigh it higher than the short-term technicals. 
+        If the math says SELL but the Catalyst says BUY, explain why the Catalyst wins.
+        """
     
+    prompt += """
     Style: Professional, direct, actionable. No disclaimers.
     Output format:
     **Thesis:** [Your reasoning]

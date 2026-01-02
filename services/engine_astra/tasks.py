@@ -30,17 +30,6 @@ REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
 app.conf.task_default_queue = 'astra_q'
 
-# --- NEW: MANUAL CATALYST REGISTRY ---
-# This acts as the "Strategic Override" for the AI.
-# score: 0 (None), 1 (Positive), 2 (Mega/Strategic - Forces Buy)
-MANUAL_CATALYSTS = {
-    "BEL.NS": {
-        "score": 2.0,
-        "context": "Pending ₹30,000 Cr QRSAM 'Anant Shastra' order expected in late FY26. This guarantees double-digit revenue growth through 2030, overriding short-term valuation concerns."
-    }
-}
-# -------------------------------------
-
 def fetch_ticker_data_with_retry(ticker, retries=3):
     """Robust fetcher to handle Yahoo Finance network errors."""
     for i in range(retries):
@@ -143,10 +132,6 @@ def process_one_stock(ticker, db):
         # SECTOR CHECK
         sector_name = info.get('sector', 'Unknown')
         sector_status = get_sector_status(db, sector_name)
-        
-        # --- CHECK MANUAL CATALYST ---
-        catalyst_data = MANUAL_CATALYSTS.get(ticker, {"score": 0.0, "context": None})
-        # -----------------------------
 
         analysis = analyze_stock(
             ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
@@ -155,7 +140,7 @@ def process_one_stock(ticker, db):
             funda_dict, float(score_news),
             sector=sector_name,
             sector_status=sector_status,
-            catalyst_score=catalyst_data['score'] # Pass the override score
+            catalyst_score=0.0 # Disabled: Passing default to avoid static data
         )
         
         # --- PHASE 3: AGENTIC REASONING ---
@@ -173,7 +158,7 @@ def process_one_stock(ticker, db):
             analysis['st']['verdict'], 
             analysis['ai_confidence'],
             summary,
-            catalyst_context=catalyst_data['context'] # Pass the strategic intel
+            catalyst_context=None # Disabled: Passing default to avoid static data
         )
         
         # Fallback if LLM fails or returns error message

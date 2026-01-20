@@ -1,5 +1,6 @@
 import os
-from sqlalchemy import create_engine, Column, String, Float, Integer, Date, UniqueConstraint
+from sqlalchemy import create_engine, Column, String, Float, Integer, Date, UniqueConstraint, Boolean
+from datetime import datetime
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:admin@db:5432/gyan_db')
@@ -69,6 +70,24 @@ class SectorPerformance(Base):
     trend_score = Column(Float) # 0-100 (Below 40 = Bearish, Above 60 = Bullish)
     status = Column(String) # "BULLISH", "BEARISH", "NEUTRAL"
     last_updated = Column(Date)
+
+class CatalystEvent(Base):
+    """
+    Stores Manual Strategic Overrides (The 'Chanakya' Inputs).
+    Replaces the temporary catalyst_store.py
+    """
+    __tablename__ = "catalyst_events"
+    id = Column(Integer, primary_key=True, index=True)
+    ticker = Column(String, index=True, nullable=False)
+    
+    # 1 (Good), 2 (Mega/Strategic), 0 (None/Clear)
+    score = Column(Integer, default=0) 
+    
+    # The "Intel" or "Thesis"
+    context = Column(String)
+    
+    created_at = Column(Date, default=datetime.now().date)
+    is_active = Column(Boolean, default=True)
 
 
 def create_db_and_tables():

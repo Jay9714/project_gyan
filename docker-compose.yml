@@ -7,10 +7,10 @@ services:
       - POSTGRES_PASSWORD=admin
       - POSTGRES_DB=gyan_db
     ports:
-      - '5433:5432' 
+      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
-  
+
   redis:
     image: redis:7
     container_name: gyan_redis
@@ -34,7 +34,7 @@ services:
       - PYTHONPATH=/app
     volumes:
       - ./services/engine_astra:/app
-      - ./shared:/app/shared 
+      - ./shared:/app/shared
     depends_on:
       - db
       - redis
@@ -48,7 +48,7 @@ services:
       - '8000:8000'
     volumes:
       - ./services/api_setu:/app
-      - ./shared:/app/shared 
+      - ./shared:/app/shared
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -67,7 +67,7 @@ services:
     volumes:
       - ./services/engine_astra:/app
       - ./saved_models:/app/saved_models
-      - ./shared:/app/shared 
+      - ./shared:/app/shared
     environment:
       - DATABASE_URL=postgresql://postgres:admin@db:5432/gyan_db
       - REDIS_URL=redis://redis:6379/0
@@ -102,8 +102,8 @@ services:
 
   darpan_ui:
     build:
-      context: .
-      dockerfile: ./services/frontend_darpan/Dockerfile
+      context: ./services/frontend_darpan
+      dockerfile: Dockerfile
     container_name: gyan_darpan_ui
     ports:
       - '8501:8501'
@@ -137,7 +137,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
 volumes:
   postgres_data:

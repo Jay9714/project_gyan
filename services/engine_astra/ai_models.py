@@ -17,10 +17,34 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 # Define features used in the ensemble model (must match tasks.py)
 ENSEMBLE_FEATURES = ['open', 'high', 'low', 'close', 'volume', 'rsi', 'macd', 'atr', 'ema_50', 'bb_u', 'bb_l', 'momentum_7', 'vol_spike', 'close_lag_1', 'close_lag_2', 'close_lag_3', 'close_lag_5']
 
+# --- LOADING & INFERENCE ---
+
+def load_model(ticker, model_type="prophet"):
+    """
+    Loads a saved model from disk.
+    model_type: 'prophet', 'xgb_cls', 'ensemble'
+    """
+    try:
+        filename = ""
+        if model_type == "prophet": filename = f"{ticker}_prophet.pkl"
+        elif model_type == "xgb_cls": filename = f"{ticker}_xgb_cls.pkl"
+        elif model_type == "ensemble": filename = f"{ticker}_ensemble.pkl"
+        
+        path = os.path.join(MODEL_DIR, filename)
+        if not os.path.exists(path):
+            return None
+            
+        return joblib.load(path) if model_type != "prophet" else pickle.load(open(path, 'rb'))
+        
+    except Exception as e:
+        print(f"AI_LOAD_ERROR {ticker} {model_type}: {e}")
+        return None
+
+# --- TRAINING FUNCTIONS (Decoupled) ---
+
 def train_prophet_model(df, ticker):
     """
-    Trains a Prophet model to predict the closing price.
-    Tuned for 'Turnaround' stocks (high sensitivity to recent trends).
+    Trains and SAVES Prophet model. Returns Forecast + Metrics (No Model Object).
     """
     # Prepare data for Prophet (ds = date, y = close)
     df_prophet = df[['date', 'close']].rename(columns={'date': 'ds', 'close': 'y'})
@@ -52,12 +76,11 @@ def train_prophet_model(df, ticker):
     future = model.make_future_dataframe(periods=365)
     forecast = model.predict(future)
     
-    return model, forecast
+    return forecast # Return only data, not the heavy model object
 
 def train_classifier_model(df, ticker):
     """
-    Trains an XGBoost Classifier to predict 'Buy' (1) or 'Sell' (0).
-    Target: Does price go up tomorrow?
+    Trains and SAVES XGBoost Classifier. Returns Confidence Score.
     """
     data = df.copy()
     
@@ -73,7 +96,7 @@ def train_classifier_model(df, ticker):
     data = data.dropna()
     
     if len(data) < 50:
-        return None, 0.0 
+        return 0.0 
     
     X = data[features]
     y = data['Target']
@@ -90,7 +113,7 @@ def train_classifier_model(df, ticker):
         learning_rate=0.05, 
         max_depth=5, 
         scale_pos_weight=ratio, 
-        n_jobs=-1, 
+        n_jobs=1,              # Fixed: n_jobs=1 to avoid Celery/Loky conflict
         use_label_encoder=False, 
         eval_metric='logloss'
     )
@@ -104,12 +127,11 @@ def train_classifier_model(df, ticker):
     model_path = os.path.join(MODEL_DIR, f"{ticker}_xgb_cls.pkl")
     joblib.dump(model, model_path)
         
-    return model, confidence
+    return confidence
 
 def train_ensemble_model(df, ticker, horizon=1):
     """
-    Trains a Stacking Regressor (Ensemble) to predict % RETURN (not raw price).
-    Target: (Next_Close - Current_Close) / Current_Close
+    Trains and SAVES Ensemble Model. Returns RMSE.
     """
     data = df.copy()
     
@@ -122,7 +144,7 @@ def train_ensemble_model(df, ticker, horizon=1):
     data = data.dropna()
     
     if len(data) < 50:
-        return None, 0.0 
+        return 0.0 
 
     X = data[features].fillna(0)
     y = data['Target']
@@ -133,13 +155,30 @@ def train_ensemble_model(df, ticker, horizon=1):
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
     
     # 3. Define Base Estimators (Must use Regressors)
+    # OPTIMIZATION (Phase 3.5): Increased complexity for better pattern recognition
     estimators = [
-        ('rf', RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)), 
-        ('xgb', XGBRegressor(n_estimators=50, random_state=42, enable_categorical=True, verbosity=0, n_jobs=-1)) 
+        ('rf', RandomForestRegressor(
+            n_estimators=200,        # Increased from 50
+            max_depth=10,            # Prevent overfitting while allowing depth
+            min_samples_split=5,     # Robustness
+            random_state=42, 
+            n_jobs=1                 # Fixed: n_jobs=1 to avoid Celery/Loky conflict
+        )), 
+        ('xgb', XGBRegressor(
+            n_estimators=200,        # Increased from 50
+            learning_rate=0.03,      # Slower learning for better generalization
+            max_depth=6,             # Slightly deeper
+            subsample=0.8,           # Reduce variance
+            colsample_bytree=0.8,    # Reduce variance
+            enable_categorical=True, 
+            verbosity=0, 
+            n_jobs=1                 # Fixed: n_jobs=1 to avoid Celery/Loky conflict
+        )) 
     ]
 
     # 4. Train Stacking Regressor
-    model = StackingRegressor(estimators=estimators, final_estimator=LinearRegression(), n_jobs=-1)
+    # 4. Train Stacking Regressor
+    model = StackingRegressor(estimators=estimators, final_estimator=LinearRegression(), n_jobs=1)
     model.fit(X_train, y_train)
     
     # 5. Evaluate
@@ -155,4 +194,4 @@ def train_ensemble_model(df, ticker, horizon=1):
     model_path = os.path.join(MODEL_DIR, f"{ticker}_ensemble.pkl")
     joblib.dump(model, model_path)
         
-    return model, rmse
+    return rmse

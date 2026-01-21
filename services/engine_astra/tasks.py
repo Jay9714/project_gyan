@@ -9,11 +9,12 @@ from celery import Celery
 from sqlalchemy.dialects.postgresql import insert 
 import numpy as np 
 
-from shared.database import SessionLocal, create_db_and_tables, StockData, FundamentalData, SectorPerformance
+from shared.database import SessionLocal, create_db_and_tables, StockData, FundamentalData, SectorPerformance, CatalystEvent
 from shared.stock_list import NIFTY50_TICKERS
 from technical_analysis import add_ta_features
-from ai_models import train_prophet_model, train_classifier_model, train_ensemble_model
+from ai_models import train_prophet_model, train_classifier_model, train_ensemble_model, load_model
 from rules_engine import analyze_stock
+# from catalyst_store import get_catalyst_for_ticker # REMOVED in Phase 2
 
 from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
 from shared.news_analysis import analyze_news_sentiment
@@ -25,6 +26,11 @@ try:
 except ImportError:
     # Fallback if file is missing during migration/build
     def generate_chanakya_reasoning(*args, **kwargs): return "Chanakya Agent not found."
+
+try:
+    from ai_catalyst import generate_ai_catalyst
+except ImportError:
+    def generate_ai_catalyst(*args): return 0, None
 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 app = Celery('astra_tasks', broker=REDIS_URL, backend=REDIS_URL)
@@ -63,9 +69,63 @@ def get_sector_status(db, sector_name):
             
     return "NEUTRAL"
 
+@app.task(name="astra.train_models")
+def train_stock_models(ticker):
+    """
+    HEAVY TASK: Trains Prophet, XGBoost, and Ensemble models.
+    Should be run weekly or on-demand, NOT on every page load.
+    """
+    print(f"ASTRA-TRAIN: Starting training for {ticker}...")
+    try:
+        t = fetch_ticker_data_with_retry(ticker)
+        if not t: return f"Failed to fetch {ticker}"
+        
+        data = t.history(period="5y", interval="1d", auto_adjust=False) # Train on more data
+        if data.empty: return f"No data for {ticker}"
+        
+        ai_df = add_ta_features(data).reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
+        
+        # Train & Save (Functions now return metrics/data, not models)
+        _ = train_prophet_model(ai_df, ticker)
+        conf = train_classifier_model(ai_df, ticker)
+        rmse = train_ensemble_model(ai_df, ticker, horizon=1)
+        
+        print(f"ASTRA-TRAIN: {ticker} Done. Conf={conf:.2f}, RMSE={rmse:.4f}")
+        return f"Success: {ticker}"
+        
+    except Exception as e:
+        print(f"ASTRA-TRAIN: Error {ticker}: {e}")
+        return f"Error: {e}"
 
-def process_one_stock(ticker, db):
-    print(f"ASTRA: Processing {ticker}...")
+
+# --------------------------------------------------------------------------
+# Phase 2: Refactored Processing with Rate Limiting & DB Catalysts
+# --------------------------------------------------------------------------
+
+def get_catalyst_from_db(ticker):
+    """
+    Fetches active catalyst from Postgres (replaces catalyst_store.py).
+    """
+    db = SessionLocal()
+    try:
+        event = db.query(CatalystEvent).filter(
+            CatalystEvent.ticker == ticker,
+            CatalystEvent.is_active == True
+        ).first()
+        if event:
+             return event.score, event.context
+        return 0, None
+    finally:
+        db.close()
+
+@app.task(name="astra.process_stock", rate_limit='12/m') # 12 per min = 1 request every 5s
+def process_one_stock(ticker):
+    """
+    LIGHTWEIGHT TASK: Loads models, runs inference, and updates DB.
+    Rate Limited to prevent Yahoo Finance IP bans.
+    """
+    print(f"ASTRA: Processing {ticker} (Inference Only)...")
+    db = SessionLocal()
     try:
         t = fetch_ticker_data_with_retry(ticker)
         if not t: return False
@@ -112,17 +172,35 @@ def process_one_stock(ticker, db):
         funda_dict.update({'piotroski_f_score': f_score, 'altman_z_score': z_score, 'beneish_m_score': m_score})
         score_news = analyze_news_sentiment(ticker)
 
-        # 4. AI & VERDICT
+        # 4. AI INFERENCE (LOAD, DON'T TRAIN)
         ai_df = data_with_ta.reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
-        prophet_model, forecast = train_prophet_model(ai_df, ticker)
-        rf_model, confidence = train_classifier_model(ai_df, ticker)
         
-        features = ['open','high','low','close','volume','rsi','macd','atr','ema_50','bb_u','bb_l','momentum_7','vol_spike','close_lag_1','close_lag_2','close_lag_3','close_lag_5']
-        stack_model, stack_rmse = train_ensemble_model(ai_df, ticker, horizon=1)
+        # Load Models
+        prophet_model = load_model(ticker, 'prophet')
+        xgb_cls = load_model(ticker, 'xgb_cls')
+        ensemble_model = load_model(ticker, 'ensemble')
         
-        # Predict Return -> Price
-        last_row = ai_df.iloc[[-1]][features].fillna(0)
-        predicted_return = float(stack_model.predict(last_row)[0]) if stack_model else 0.0
+        # Forecast
+        forecast = None
+        if prophet_model:
+            future = prophet_model.make_future_dataframe(periods=300) # Re-use model for new dates
+            forecast = prophet_model.predict(future)
+            
+        # Confidence
+        confidence = 0.5 # Default
+        features_cls = ['rsi', 'macd', 'ema_50', 'close', 'volume', 'atr', 'momentum_7', 'vol_spike']
+        if xgb_cls:
+             last_row_cls = ai_df.iloc[[-1]][features_cls].fillna(0)
+             pred_cls = xgb_cls.predict(last_row_cls)[0]
+             confidence = 0.8 if pred_cls == 1 else 0.2
+        
+        # Ensemble Prediction
+        predicted_return = 0.0
+        features_ens = ['open','high','low','close','volume','rsi','macd','atr','ema_50','bb_u','bb_l','momentum_7','vol_spike','close_lag_1','close_lag_2','close_lag_3','close_lag_5']
+        if ensemble_model:
+            last_row_ens = ai_df.iloc[[-1]][features_ens].fillna(0)
+            predicted_return = float(ensemble_model.predict(last_row_ens)[0])
+
         current_close = float(ai_df['close'].iloc[-1])
         predicted_close = current_close * (1 + predicted_return)
 
@@ -133,6 +211,25 @@ def process_one_stock(ticker, db):
         sector_name = info.get('sector', 'Unknown')
         sector_status = get_sector_status(db, sector_name)
 
+        # CATALYST CHECK (DB + AI Fallback)
+        cat_score, cat_context = get_catalyst_from_db(ticker)
+        
+        # If DB is empty, ask AI (Dynamic Generation)
+        if cat_score == 0:
+            print(f"ASTRA: No manual catalyst for {ticker}. Asking AI...")
+            cat_score, cat_context = generate_ai_catalyst(ticker)
+            
+            # Save AI discovery to DB (Cache it)
+            if cat_score > 0:
+                try:
+                    new_cat = CatalystEvent(ticker=ticker, score=cat_score, context=cat_context, is_active=True)
+                    db.add(new_cat)
+                    db.commit() # Commit immediately so it persists
+                    print(f"ASTRA: AI Found & Saved Catalyst for {ticker}: {cat_score}")
+                except Exception as e:
+                    print(f"ASTRA: Failed to save AI catalyst: {e}")
+                    db.rollback()
+
         analysis = analyze_stock(
             ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
             float(latest['ema_50']), float(atr_val),
@@ -140,7 +237,7 @@ def process_one_stock(ticker, db):
             funda_dict, float(score_news),
             sector=sector_name,
             sector_status=sector_status,
-            catalyst_score=0.0 # Disabled: Passing default to avoid static data
+            catalyst_score=float(cat_score) 
         )
         
         # --- PHASE 3: AGENTIC REASONING ---
@@ -158,15 +255,13 @@ def process_one_stock(ticker, db):
             analysis['st']['verdict'], 
             analysis['ai_confidence'],
             summary,
-            catalyst_context=None # Disabled: Passing default to avoid static data
+            catalyst_context=cat_context
         )
         
-        # Fallback if LLM fails or returns error message
         if "Chanakya is" in ai_narrative or "LLM Error" in ai_narrative:
              final_reasoning = analysis['reasoning'] + f"\n\n**Agent Note:** {ai_narrative}"
         else:
              final_reasoning = ai_narrative
-        # ----------------------------------
 
         # 5. SAVE
         existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
@@ -180,9 +275,7 @@ def process_one_stock(ticker, db):
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
-            
-            "ai_reasoning": final_reasoning, # Replaces rule-based text
-            
+            "ai_reasoning": final_reasoning, 
             "ai_confidence": float(analysis['ai_confidence']), 
             "predicted_close": predicted_close, "ensemble_score": float(comp_score),
             "last_updated": datetime.now().date()
@@ -199,8 +292,12 @@ def process_one_stock(ticker, db):
 
     except Exception as e:
         db.rollback()
+        import traceback
+        traceback.print_exc()
         print(f"ASTRA: ERROR {ticker}: {e}")
         return False
+    finally:
+        db.close()
 
 
 @app.task(name="astra.run_sector_update")
@@ -213,13 +310,17 @@ def run_sector_update():
 
 @app.task(name="astra.run_nightly_update")
 def run_nightly_update():
-    print("ASTRA: Starting Nightly Update...")
-    db = SessionLocal()
+    """
+    DISPATCHER: Only fires off the tasks.
+    Rate limiting is handled by the worker queue configuration (12/m).
+    """
+    print("ASTRA: Dispatching Nightly Update Tasks...")
+    
+    # Fire and Forget - The Rate Limiter will handle the spacing
     for ticker in NIFTY50_TICKERS:
-        process_one_stock(ticker, db)
-        time.sleep(random.uniform(2.0, 5.0))
-    db.close()
-    print("ASTRA: Nightly update complete.")
+        process_one_stock.delay(ticker)
+        
+    print(f"ASTRA: Dispatched {len(NIFTY50_TICKERS)} tasks to queue.")
     return "Success"
 
 
@@ -227,19 +328,48 @@ def run_nightly_update():
 def run_single_stock_update(ticker):
     print(f"ASTRA: Received on-demand request for {ticker}...")
     
-    # 1. Update Sectors FIRST (so we have context)
-    # This ensures the 'process_one_stock' function finds valid sector data
     db = SessionLocal()
     try:
-        print("ASTRA: Refreshing Sector Trends for accurate context...")
-        update_sector_trends(db)
-    except Exception as e:
-        print(f"ASTRA: Warning - Sector update failed: {e}")
-    finally:
-        db.close()
+        update_sector_trends(db) # Context First
+    except: pass
+    finally: db.close()
+
+    # Call directly (bypass rate limit for user request) or use .delay() to enforce it
+    # Ideally for UX, we want it fast, so we call directly here, assuming user won't spam.
+    return process_one_stock(ticker) # Direct call
+
+
+@app.task(name="astra.run_backtest")
+def run_backtest_task(ticker, start_date, end_date):
+    """
+    Runs a historical backtest for a single ticker.
+    Returns JSON report.
+    """
+    from backtest_engine import BacktestEngine
+    print(f"ASTRA-BACKTEST: Starting {ticker} ({start_date} to {end_date})")
     
-    # 2. Analyze the Stock
-    db = SessionLocal()
-    success = process_one_stock(ticker, db)
-    db.close()
-    return f"Processed {ticker}: {success}"
+    engine = BacktestEngine(ticker)
+    results = engine.run(start_date, end_date)
+    
+    if results is None or results.empty:
+        return {"status": "failed", "reason": "No data or empty results"}
+        
+    # Summarize
+    total_days = len(results)
+    trades = results[results['signal'] != "HOLD"]
+    total_trades = len(trades)
+    
+    if total_trades > 0:
+        win_rate = len(trades[trades['correct'] == True]) / total_trades * 100
+    else:
+        win_rate = 0.0
+        
+    return {
+        "status": "success",
+        "ticker": ticker,
+        "total_days": total_days,
+        "total_trades": total_trades,
+        "win_rate": round(win_rate, 2),
+        "data": results.head(5).to_dict(orient="records") # Just peek
+    }
+

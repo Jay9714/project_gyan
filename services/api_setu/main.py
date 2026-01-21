@@ -13,7 +13,40 @@ from typing import List, Dict, Any
 
 app = FastAPI(title="Setu API - Project Gyan")
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
-celery_app = Celery('api_sender', broker=REDIS_URL)
+# Added 'backend' to enable result retrieval
+celery_app = Celery('api_sender', broker=REDIS_URL, backend=REDIS_URL)
+
+@app.get("/backtest/{ticker}")
+def run_backtest(ticker: str):
+    """
+    Triggers a backtest simulation for the ticker.
+    Waits for result (up to 60s) to provide immediate feedback.
+    """
+    ticker = ticker.strip().upper()
+    print(f"API: Requesting Backtest for {ticker}...")
+    
+    # Trigger Task
+    # We use a fixed date range for the demo: Jan 1 2025 to April 1 2025
+    # In a real app, these would be query params.
+    task = celery_app.send_task(
+        "astra.run_backtest", 
+        args=[ticker, "2025-01-01", "2025-04-01"],
+        queue="astra_q"
+    )
+    
+    try:
+        # Wait for result (Blocking Call)
+        # OPTIMIZATION: Model is heavy (200 trees), takes ~120-150s.
+        # Increased timeout to 300s (5 mins) to prevent premature failure.
+        result = task.get(timeout=300)
+        return result
+    except Exception as e:
+        print(f"Backtest Timeout/Error: {e}")
+        return {
+            "status": "running", 
+            "message": "Backtest is taking longer than expected. Check logs.", 
+            "task_id": task.id
+        }
 
 @app.get("/")
 def read_root():
@@ -149,13 +182,16 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Invalid horizon '{horizon}'. Use: short, mid, long")
 
     # Filter by 'BUY', 'ACCUMULATE', and 'STRONG BUY'
+    # We fetch ALL and sort in Python to handle calculated fields like 'upside'
     results = db.query(FundamentalData).filter(
         verdict_col.in_(['BUY', 'ACCUMULATE', 'STRONG BUY'])
-    ).order_by(FundamentalData.ai_confidence.desc()).limit(20).all()
+    ).all()
     
     screener_data = []
     
     for r in results:
+        # Optimization: Fetch price from DB Technicals instead of Live if speed is key
+        # For screener, speed >> live precision.
         tech = db.query(StockData).filter(StockData.ticker == r.ticker).order_by(StockData.date.desc()).first()
         curr_price = tech.close if tech else 0.0
         
@@ -167,7 +203,15 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
         upside = 0.0
         if curr_price > 0 and tgt:
             upside = ((tgt - curr_price) / curr_price) * 100
-            
+        
+        # --- HORIZON SPECIFIC FILTERING ---
+        if horizon == "long":
+            # Quality Filter: Discard Junk for Long Term
+            # F-Score < 5 means deteriorating fundamentals.
+            if r.piotroski_f_score is not None and r.piotroski_f_score < 5:
+                continue
+                
+        # Append to list
         screener_data.append({
             "ticker": r.ticker,
             "company_name": r.company_name,
@@ -178,7 +222,18 @@ def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
             "stop_loss": sl,
             "upside_pct": round(upside, 2),
             "duration_days": vld_days,
-            "reasoning": r.ai_reasoning
+            "reasoning": r.ai_reasoning,
+            # Internal helpers for sorting
+            "_f_score": r.piotroski_f_score or 0
         })
+    
+    # --- SORTING LOGIC ---
+    if horizon == "long":
+        # Sort by Quality (F-Score) weighted heavily with Upside
+        # We want High Quality stocks that also have upside.
+        screener_data.sort(key=lambda x: (x['_f_score'] * 10) + x['upside_pct'], reverse=True)
+    else:
+        # Short/Mid Term: Momentum rules. Pure Upside.
+        screener_data.sort(key=lambda x: x['upside_pct'], reverse=True)
         
-    return screener_data
+    return screener_data[:20]

@@ -47,7 +47,11 @@ def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, ca
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
-        "stream": False
+        "stream": False,
+        "options": {
+            "num_predict": 100, # Limit output length to be concise
+            "temperature": 0.3
+        }
     }
     
     try:

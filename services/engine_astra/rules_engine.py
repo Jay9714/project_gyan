@@ -22,6 +22,8 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     f_score = fundamentals.get('piotroski_f_score', 5)
     z_score = fundamentals.get('altman_z_score', 3.0)
     m_score = fundamentals.get('beneish_m_score', -2.5)
+    pe_ratio = fundamentals.get('pe_ratio', 20.0)
+    div_yield = fundamentals.get('dividend_yield', 0.0)
 
     # --- 2. SECTOR ADAPTIVE LOGIC ---
     capital_intensive_keywords = [
@@ -37,9 +39,25 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     is_positive_news = sentiment_score > 0.1
     is_ai_bearish = st_target < current_price
     is_safe = z_score > 1.8 or ignore_z_score
+    is_value_opportunity = (
+        (f_score >= 6 and pe_ratio < 20 and pe_ratio > 0) or 
+        (div_yield > 0.03) or
+        (pe_ratio < 15 and pe_ratio > 0)
+    )
     
     using_momentum_target = False
+
+    # GROWTH POTENTIAL/QUALITY Override
+    # Protect High ROE + High Growth stocks from being sold on technical dips
+    roe = fundamentals.get('roe', 0)
+    rev_growth = fundamentals.get('revenue_growth', 0)
+    debt_equity = fundamentals.get('debt_to_equity', 1.0)
     
+    is_high_quality_growth = (
+        roe > 0.15 and 
+        rev_growth > 0.10 and 
+        debt_equity < 0.5
+    )
     # --- 4. SCORING ---
     score = 0
     if rsi < 40: score += 1
@@ -54,12 +72,16 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     
     if sentiment_score > 0.2: score += 2
     elif sentiment_score < -0.2: score -= 2
+
+    # Value / Income Boost
+    if is_value_opportunity: score += 2
     
     # --- NEW: CATALYST INJECTION ---
     # catalyst_score: 0 (None), 1 (Good), 2 (Mega/Strategic)
     score += (catalyst_score * 2.5) # A Mega Catalyst adds +5 points, capable of flipping any verdict
 
     # --- 5. VERDICT GENERATION ---
+    reasoning_lines = []
     upside = ((st_target - current_price) / current_price) * 100
     
     verdict = "HOLD"
@@ -71,6 +93,9 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
     # Catalyst Override
     elif catalyst_score >= 2:
         verdict = "STRONG BUY" # Force Buy on Mega Catalyst
+        st_target = calculate_momentum_target(current_price, atr, 'short')
+        mt_target = calculate_momentum_target(current_price, atr, 'mid')
+        lt_target = calculate_momentum_target(current_price, atr, 'long')
         using_momentum_target = True
         
     elif using_momentum_target or (is_uptrend and is_positive_news and is_ai_bearish and is_safe):
@@ -81,7 +106,27 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
         verdict = "BUY" if score >= 2 else "ACCUMULATE"
         
     elif st_target < current_price:
-        verdict = "SELL" if upside < -2.0 else "HOLD"
+        if is_value_opportunity and upside > -10.0:
+            verdict = "ACCUMULATE"
+            st_target = max(st_target, calculate_momentum_target(current_price, atr, 'short'))
+            mt_target = max(mt_target, calculate_momentum_target(current_price, atr, 'mid'))
+            lt_target = max(lt_target, calculate_momentum_target(current_price, atr, 'long'))
+            reasoning_lines.append("💎 **Value Pick:** Strong fundamentals override short-term technical weakness. Targets adjusted for value realization.")
+        elif is_high_quality_growth:
+            # For Growth stocks, we don't want to SELL just because of a dip/correction.
+            # If the drop is huge (>30%), it might be a split artifact or real crash, so be careful.
+            # But generally, HOLD winners.
+            if upside > -30.0:
+                 verdict = "ACCUMULATE"
+                 st_target = max(st_target, calculate_momentum_target(current_price, atr, 'short'))
+                 mt_target = max(mt_target, calculate_momentum_target(current_price, atr, 'mid'))
+                 lt_target = max(lt_target, calculate_momentum_target(current_price, atr, 'long'))
+                 reasoning_lines.append("🚀 **Growth Rocket:** High quality compounder (High ROE/Growth). Buying on dips logic active.")
+            else:
+                 verdict = "HOLD"
+                 reasoning_lines.append("🛡️ **Quality Hold:** Fundamentals are elite. Holding despite technical volatility.")
+        else:
+            verdict = "SELL" if upside < -2.0 else "HOLD"
         
         # Soft Catalyst Check: If we have a catalyst but math says SELL, force HOLD/ACCUMULATE
         if catalyst_score >= 1 and verdict == "SELL":
@@ -100,7 +145,6 @@ def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, 
             sector_downgrade = True
 
     # --- 7. RICH REASONING GENERATION ---
-    reasoning_lines = []
     
     reasoning_lines.append(f"### 🎯 **Final Verdict: {verdict}**")
     

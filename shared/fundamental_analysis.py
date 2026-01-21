@@ -39,7 +39,7 @@ def compute_fundamental_ratios(stock_obj):
     """
     ratios = {
         "roe": 0.0, "debt_to_equity": 0.0, "free_cash_flow": 0.0, "revenue_growth": 0.0,
-        "market_cap": 0.0, "pe_ratio": 0.0, "eps": 0.0, "beta": 0.0
+        "market_cap": 0.0, "pe_ratio": 0.0, "eps": 0.0, "beta": 0.0, "dividend_yield": 0.0
     }
 
     try:
@@ -51,10 +51,15 @@ def compute_fundamental_ratios(stock_obj):
 
         # Basic Stats
         try:
-            ratios["market_cap"] = float(fast.get("market_cap") or 0)
+            # TRY FAST_INFO (Realtime) -> THEN INFO (Cached)
+            mc = fast.get("market_cap")
+            if mc is None: mc = info.get("marketCap")
+            ratios["market_cap"] = float(mc or 0)
+            
             ratios["pe_ratio"] = float(info.get("trailingPE") or 0)
             ratios["eps"] = float(info.get("trailingEps") or 0)
             ratios["beta"] = float(info.get("beta") or 0)
+            ratios["dividend_yield"] = float(info.get("dividendYield") or 0)
         except: pass
 
         # ROE (Net Income / Equity)
@@ -138,7 +143,7 @@ def altman_z_score(fin, bal, market_cap):
         ebit = _get_val(fin, ["EBIT", "Operating Income"])
         sales = _get_val(fin, ["Total Revenue"])
         
-        if not ta or ta == 0: return 3.0 # Safe default
+        if not ta or ta == 0: return 1.8 # Grey Zone default (instead of safe 3.0)
         
         wc = ca - cl
         A = wc / ta
@@ -149,7 +154,7 @@ def altman_z_score(fin, bal, market_cap):
         
         z = (1.2*A) + (1.4*B) + (3.3*C) + (0.6*D) + (1.0*E)
         return float(z)
-    except: return 3.0
+    except: return 1.8
 
 def beneish_m_score(fin, bal, cf):
     """
@@ -180,7 +185,7 @@ def beneish_m_score(fin, bal, cf):
         
         return float(m_score)
     except:
-        return -2.5 # Safe default
+        return -1.78 # Borderline default (instead of safe -2.5)
 
 # --- 3. Scoring Functions ---
 
@@ -205,6 +210,23 @@ def score_fundamentals(r):
         elif r['revenue_growth'] > 0.10: score += 15
         elif r['revenue_growth'] > 0.05: score += 10
 
+    # Dividend Yield
+    if r.get('dividend_yield', 0) > 0:
+        weights += 1
+        yield_val = r['dividend_yield']
+        if yield_val > 0.04: score += 20
+        elif yield_val > 0.02: score += 15
+        else: score += 10
+        
+    # PE Ration (Valuation)
+    pe = r.get('pe_ratio', 0)
+    if pe > 0:
+        weights += 1
+        if pe < 15: score += 20     # Deep Value
+        elif pe < 25: score += 15   # Fair Value
+        elif pe < 40: score += 10   # Growth
+        else: score += 5           # Expensive
+        
     if weights == 0: return 50.0
     return min(100.0, (score / (weights * 20.0)) * 100.0)
 

@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Copy the local requirements.txt
 COPY requirements.txt .
-RUN pip install --default-timeout=1000 --retries 10 --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=1000 --retries 10 -r requirements.txt
 
 # Copy app code
 COPY . .

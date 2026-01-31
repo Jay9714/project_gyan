@@ -1,0 +1,20 @@
+The StatsForecast module could not be imported. To enable support for the AutoARIMA, AutoETS and Croston models, please consider installing it.
+=== STARTING UPGRADE TEST ===
+✅ VectorBT Installed: 0.28.2
+✅ Darts Installed: 0.40.0
+✅ CatBoost Installed: 1.2.8
+✅ LightGBM Installed: 4.6.0
+✅ Optuna Installed: 4.7.0
+✅ SHAP Installed: 0.50.0
+
+--- Testing Phase 2: Market Regime ---
+✅ Market Regime Detected: 0
+
+--- Testing Phase 2: Technical Analysis ---
+❌ Technical Analysis Failed: NDFrame.fillna() got an unexpected keyword argument 'method'
+
+--- Testing Phase 3: AI Models ---
+✅ AI Models Imported
+✅ ENSEMBLE_FEATURES updated correctly
+
+=== TEST COMPLETE ===

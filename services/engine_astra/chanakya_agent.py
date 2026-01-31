@@ -6,7 +6,7 @@ OLLAMA_URL = "http://ollama:11434/api/generate"
 # Fallback model if specific version fails
 MODEL_NAME = "llama3" 
 
-def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, catalyst_context=None):
+def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, catalyst_context=None, shap_explanation=None):
     """
     Uses Local LLM to generate a professional investment thesis.
     NOW SUPPORTS: 'catalyst_context' - Strategic info that overrides math.
@@ -23,6 +23,7 @@ def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, ca
     - Trend: {data_summary.get('trend', 'Neutral')}
     - Fundamentals: Quality={data_summary.get('quality', 'Avg')}, Risk={data_summary.get('risk', 'Avg')}
     - AI Target: {data_summary.get('target', 0)}
+    - Local Factors: {shap_explanation if shap_explanation else 'N/A'}
     """
 
     # 2. INJECT MEGA-CATALYST (Qualitative Override)

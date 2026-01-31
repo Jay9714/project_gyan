@@ -4,6 +4,41 @@ from ta.trend import MACD, EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 
+def sanitize_data(df):
+    """
+    Sanitize the dataframe:
+    - Replace outliers: Close > 20% change AND Vol change < 200%.
+    - Drop rows where Volume is 0.
+    """
+    # Drop rows where Volume is 0 (non-trading days)
+    df = df[df['Volume'] > 0].copy()
+
+    # Detect outliers (Flash Crash check)
+    close_pct = df['Close'].pct_change().abs()
+    vol_pct = df['Volume'].pct_change().abs()
+
+    # Condition: Price changed > 20% but Volume didn't explode (> 200% change)
+    # This usually indicates bad data (splits/glitches) unless handled by yfinance auto_adjust
+    mask = (close_pct > 0.20) & (vol_pct < 2.0)
+    
+    # We replace outliers with NaNs and then interpolate
+    if mask.any():
+        df.loc[mask, 'Close'] = np.nan
+        df['Close'] = df['Close'].interpolate(method='linear')
+        # Re-fill Open/High/Low to match Close? Or just leave them?
+        # For simplicity, we assume Close is the primary driver. 
+        # But to be safe, if Close is bad, probably O/H/L are too.
+        # Let's drop them or interpolate them too?
+        # Implementation instruction just says "replace with NaN or interpolated value".
+        # We will interpolate Close.
+
+    # Fill any remaining NaNs
+    # Fill any remaining NaNs
+    df.ffill(inplace=True)
+    df.bfill(inplace=True)
+
+    return df
+
 def add_ta_features(df):
     """
     Adds 'Mega' Technical Features for Max Power Prediction.
@@ -12,6 +47,9 @@ def add_ta_features(df):
     # Ensure proper sorting
     df = df.sort_index()
     
+    # Sanitize First (Task 1.3)
+    df = sanitize_data(df)
+
     # 1. Basic Indicators
     df['rsi'] = RSIIndicator(close=df['Close'], window=14).rsi()
     
@@ -48,6 +86,16 @@ def add_ta_features(df):
     # Allows the AI to see "What happened 1, 2, 3 days ago?"
     for lag in [1, 2, 3, 5]:
         df[f'close_lag_{lag}'] = df['Close'].shift(lag)
+        
+    # 6. Cross-Sectional Normalization (Phase 2: Task 2.2)
+    # Relative Volume: Volume / 20-day Average
+    df['vol_rel'] = df['Volume'] / (df['vol_20'] + 1e-9)
+
+    # Distance from EMA: (Close - EMA_20) / Close
+    df['dist_ema'] = (df['Close'] - df['ema_20']) / df['Close']
+    
+    # Normalized ATR: ATR / Close (Percentage Volatility)
+    df['atr_pct'] = df['atr'] / df['Close']
         
     df.fillna(0, inplace=True)
     return df

@@ -10,6 +10,8 @@ from datetime import date
 import os
 from celery import Celery
 from typing import List, Dict, Any
+import logging
+import traceback
 
 app = FastAPI(title="Setu API - Project Gyan")
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
@@ -17,36 +19,45 @@ REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 celery_app = Celery('api_sender', broker=REDIS_URL, backend=REDIS_URL)
 
 @app.get("/backtest/{ticker}")
-def run_backtest(ticker: str):
+async def run_backtest(ticker: str):
     """
     Triggers a backtest simulation for the ticker.
-    Waits for result (up to 60s) to provide immediate feedback.
+    Returns a Task ID immediately. Use /backtest/status/{task_id} to check results.
     """
     ticker = ticker.strip().upper()
-    print(f"API: Requesting Backtest for {ticker}...")
+    logging.info(f"API: Requesting Backtest for {ticker}...")
     
     # Trigger Task
     # We use a fixed date range for the demo: Jan 1 2025 to April 1 2025
-    # In a real app, these would be query params.
     task = celery_app.send_task(
         "astra.run_backtest", 
         args=[ticker, "2025-01-01", "2025-04-01"],
         queue="astra_q"
     )
     
+    return {
+        "status": "submitted", 
+        "message": "Backtest started", 
+        "task_id": task.id
+    }
+
+@app.get("/backtest/status/{task_id}")
+async def get_backtest_status(task_id: str):
+    """
+    Checks the status of a backtest task.
+    """
     try:
-        # Wait for result (Blocking Call)
-        # OPTIMIZATION: Model is heavy (200 trees), takes ~120-150s.
-        # Increased timeout to 300s (5 mins) to prevent premature failure.
-        result = task.get(timeout=300)
-        return result
+        result = celery_app.AsyncResult(task_id)
+        if result.ready():
+            return {
+                "status": "completed",
+                "result": result.get()
+            }
+        else:
+            return {"status": "pending"}
     except Exception as e:
-        print(f"Backtest Timeout/Error: {e}")
-        return {
-            "status": "running", 
-            "message": "Backtest is taking longer than expected. Check logs.", 
-            "task_id": task.id
-        }
+        logging.error(f"Status Check Error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Failed to check status")
 
 @app.get("/")
 def read_root():
@@ -69,7 +80,7 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
     
     # If missing or stale, trigger background update
     if not funda or is_stale:
-        print(f"API: Triggering background update for {ticker}...")
+        logging.info(f"API: Triggering background update for {ticker}...")
         celery_app.send_task("astra.run_single_stock_update", args=[ticker], queue="astra_q")
 
     if funda:
@@ -151,7 +162,7 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
     except HTTPException as he:
         raise he
     except Exception as e:
-        print(f"API Error: {e}")
+        logging.error(f"API Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
 
 

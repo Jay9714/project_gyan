@@ -3,6 +3,8 @@ import numpy as np
 import os
 import pickle
 import joblib
+import logging
+import traceback
 from prophet import Prophet
 # Phase 3: Darts & Boosting
 from darts import TimeSeries
@@ -53,7 +55,7 @@ def load_model(ticker, model_type="prophet"):
         return joblib.load(path) if model_type != "prophet" else pickle.load(open(path, 'rb'))
         
     except Exception as e:
-        print(f"AI_LOAD_ERROR {ticker} {model_type}: {e}")
+        logging.error(f"AI_LOAD_ERROR {ticker} {model_type}: {traceback.format_exc()}")
         return None
 
 # --- TRAINING FUNCTIONS (Decoupled) ---
@@ -192,23 +194,18 @@ def train_classifier_model(df, ticker):
         
     return confidence
 
-def train_ensemble_model(df, ticker, horizon=1):
+
+
+def train_ensemble_model(df, ticker, horizon=1, best_params=None):
     """
     Trains and SAVES Ensemble Model. Returns RMSE.
+    Accepts best_params dict for XGBoost tuning.
     """
     data = df.copy()
     
     # --- Predict Returns, not Price ---
-    # Target (Refined Phase 2): Use Log Returns: np.log(Close / Close.shift(1))
     data['Target'] = np.log(data['close'].shift(-horizon) / data['close'])
     
-    # 2. Prepare Data
-    # Task 2.2: Include new normalized features in ENSEMBLE_FEATURES
-    # Update global list to match what is produced in technical_analysis.py
-    # (Dynamically updating the list used inside this function if global is not updated)
-    # But better to update the features extraction logic:
-    
-    # Ensure normalized features are used if available
     features_to_use = [f for f in ENSEMBLE_FEATURES + ['vol_rel', 'dist_ema', 'atr_pct'] if f in data.columns]
     data = data.dropna()
     
@@ -223,10 +220,22 @@ def train_ensemble_model(df, ticker, horizon=1):
     X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
     
-    # 3. Define Base Estimators (Must use Regressors)
-    # OPTIMIZATION (Phase 3.5): Increased complexity for better pattern recognition
-    # 3. Define Base Estimators (Must use Regressors)
-    # Phase 3.2: Integreate CatBoost & LightGBM
+    # XGB Params
+    xgb_params = {
+        'n_estimators': 100, 
+        'learning_rate': 0.03, 
+        'max_depth': 6, 
+        'subsample': 0.8, 
+        'colsample_bytree': 0.8,
+        'enable_categorical': True, 
+        'verbosity': 0, 
+        'n_jobs': 1 
+    }
+    
+    if best_params:
+        xgb_params.update(best_params)
+
+    # 3. Define Base Estimators
     estimators = [
         ('rf', RandomForestRegressor(
             n_estimators=100,
@@ -235,16 +244,7 @@ def train_ensemble_model(df, ticker, horizon=1):
             random_state=42, 
             n_jobs=1 
         )), 
-        ('xgb', XGBRegressor(
-            n_estimators=100, 
-            learning_rate=0.03, 
-            max_depth=6, 
-            subsample=0.8, 
-            colsample_bytree=0.8,
-            enable_categorical=True, 
-            verbosity=0, 
-            n_jobs=1 
-        )),
+        ('xgb', XGBRegressor(**xgb_params)),
         ('cat', CatBoostRegressor(
             iterations=100, 
             learning_rate=0.03, 
@@ -261,18 +261,14 @@ def train_ensemble_model(df, ticker, horizon=1):
     ]
 
     # 4. Train Stacking Regressor
-    # 4. Train Stacking Regressor
     model = StackingRegressor(estimators=estimators, final_estimator=LinearRegression(), n_jobs=1)
     model.fit(X_train, y_train)
     
     # 5. Evaluate
     preds = model.predict(X_test)
     
-    # --- UNIVERSAL FIX: Calculate RMSE Manually ---
-    # This works on ALL scikit-learn versions (old and new)
     mse = mean_squared_error(y_test, preds)
     rmse = np.sqrt(mse)
-    # ----------------------------------------------
     
     # 6. Save Model
     model_path = os.path.join(MODEL_DIR, f"{ticker}_ensemble.pkl")

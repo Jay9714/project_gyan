@@ -1,5 +1,5 @@
 LLM RESPONSE:
 {
 "score": 2,
-"context": "IRFC posts its biggest-ever profit of Rs 1,802 crore, up 11% YoY in Q3 Results"
+"context": "FM Sitharaman's announcement of a rare earth corridor in Budget 2026"
 }

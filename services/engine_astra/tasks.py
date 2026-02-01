@@ -18,6 +18,9 @@ from rules_engine import analyze_stock
 from market_regime import detect_market_regime
 # Phase 4.1: Explainability
 from explainability import explain_prediction
+from tuning import optimize_ensemble_hyperparameters
+import logging
+import traceback
 
 from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
 from shared.news_analysis import analyze_news_sentiment
@@ -66,7 +69,8 @@ def fetch_macro_data():
                 m_close = m_df[['Close']].rename(columns={'Close': f'macro_{name.lower()}'})
                 m_close.index = m_close.index.tz_localize(None)
                 macro_dfs.append(m_close)
-        except: pass
+        except: 
+            logging.error(f"Macro Fetch Error: {traceback.format_exc()}")
     return macro_dfs
 
 def get_sector_status(db, sector_name):
@@ -87,13 +91,19 @@ def get_sector_status(db, sector_name):
             
     return "NEUTRAL"
 
+import logging
+import traceback
+from tuning import optimize_ensemble_hyperparameters
+
+# ... existing code ...
+
 @app.task(name="astra.train_models")
 def train_stock_models(ticker):
     """
     HEAVY TASK: Trains Prophet, XGBoost, and Ensemble models.
     Should be run weekly or on-demand, NOT on every page load.
     """
-    print(f"ASTRA-TRAIN: Starting training for {ticker}...")
+    logging.info(f"ASTRA-TRAIN: Starting training for {ticker}...")
     try:
         t = fetch_ticker_data_with_retry(ticker)
         if not t: return f"Failed to fetch {ticker}"
@@ -112,7 +122,8 @@ def train_stock_models(ticker):
                     m_close = m_df[['Close']].rename(columns={'Close': f'macro_{name.lower()}'})
                     m_close.index = m_close.index.tz_localize(None)
                     macro_dfs.append(m_close)
-            except: pass
+            except: 
+                logging.error(traceback.format_exc())
         
         data.index = data.index.tz_localize(None)
         data = data[~data.index.duplicated(keep='first')]
@@ -123,17 +134,27 @@ def train_stock_models(ticker):
         
         ai_df = add_ta_features(data).reset_index().rename(columns={'Date':'date','Close':'close','Volume':'volume','Open':'open','High':'high','Low':'low'})
         
+        # Phase 3.3: Hyperparameter Optimization
+        best_params = {}
+        try:
+            # Only run if we have enough data
+            if len(ai_df) > 100:
+                logging.info(f"ASTRA-TRAIN: Optimizing hyperparameters for {ticker}...")
+                best_params = optimize_ensemble_hyperparameters(ai_df, ticker)
+        except Exception as e:
+             logging.error(f"Hyperopt Failed for {ticker}: {traceback.format_exc()}")
+
         # Train & Save (Functions now return metrics/data, not models)
         _ = train_prophet_model(ai_df, ticker)
         _ = train_nbeats_model(ai_df, ticker) # Phase 3.1: Darts
         conf = train_classifier_model(ai_df, ticker)
-        rmse = train_ensemble_model(ai_df, ticker, horizon=1)
+        rmse = train_ensemble_model(ai_df, ticker, horizon=1, best_params=best_params)
         
-        print(f"ASTRA-TRAIN: {ticker} Done. Conf={conf:.2f}, RMSE={rmse:.4f}")
+        logging.info(f"ASTRA-TRAIN: {ticker} Done. Conf={conf:.2f}, RMSE={rmse:.4f}")
         return f"Success: {ticker}"
         
     except Exception as e:
-        print(f"ASTRA-TRAIN: Error {ticker}: {e}")
+        logging.error(f"ASTRA-TRAIN: Error {ticker}: {traceback.format_exc()}")
         return f"Error: {e}"
 
 
@@ -380,9 +401,7 @@ def process_one_stock(ticker):
 
     except Exception as e:
         db.rollback()
-        import traceback
-        traceback.print_exc()
-        print(f"ASTRA: ERROR {ticker}: {e}")
+        logging.error(f"ASTRA: ERROR {ticker}: {traceback.format_exc()}")
         return False
     finally:
         db.close()
@@ -419,7 +438,8 @@ def run_single_stock_update(ticker):
     db = SessionLocal()
     try:
         update_sector_trends(db) # Context First
-    except: pass
+    except: 
+        logging.error(f"Context Update Failed: {traceback.format_exc()}")
     finally: db.close()
 
     # Call directly (bypass rate limit for user request) or use .delay() to enforce it

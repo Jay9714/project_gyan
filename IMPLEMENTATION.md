@@ -1,130 +1,93 @@
-Project Gyan: Quantitative Upgrade Roadmap
-Status: Draft
-Target: Senior Quantitative Research System
-Constraints: 100% Free & Open Source Tools Only (MIT/Apache 2.0)
-🤖 Context for AI Agents
-You are an expert Quantitative Developer and ML Engineer. Your task is to upgrade "Project Gyan" from an intermediate stock analysis tool to a professional-grade research system.
-Follow the phases below strictly. Do not introduce paid APIs (like Bloomberg/Refinitiv). Use yfinance for data, VectorBT for backtesting, and Darts/CatBoost for modeling.
-📦 Phase 0: Dependencies & Environment
-Goal: Install necessary open-source libraries without breaking existing services.
-[ ] Task 0.1: Update Requirements
-Files: services/engine_astra/requirements.txt, services/worker_chakra/requirements.txt
-Action: Add the following libraries:
-vectorbt>=0.23.0
-darts>=0.24.0
-catboost>=1.2
-lightgbm>=4.0.0
-optuna>=3.0.0
-shap>=0.40.0
-statsmodels>=0.14.0
-scikit-learn>=1.3.0
+Phase 1: High-Fidelity Simulation & Cost Modeling (Updated)
+Goal: Realistic simulations now include multi-instrument costs, dynamic intervals/indicators, and backtesting with your algos.
+
+Task 1.1: Precision Cost Engine (Enhanced)
+Update shared/costs.py to handle costs for all instruments: Equity (small capital, e.g., 10k min), Options/Futures (1 lakh+ min, with premium-based STT), Indices/CDS/MCX (commodity-specific charges).
+AI decision hook: Local LLM evaluates user capital to filter feasible instruments (e.g., if capital < 1 lakh, exclude options).
+
+Task 1.2: VectorBT Integration (Enhanced)
+Refactor to support multi-interval backtesting (1min-1h) and chart types (candle/Heikin Ashi via TA-Lib transformations).
+Integrate your algo list: Test hybrids like MACD + RSI for overbought/oversold, Bollinger + VWAP for mean reversion.
+Add Monte Carlo sims (using NumPy) for risk scenarios.
+
+Task 1.3: Market Replay Service (Enhanced)
+Extend Celery task to replay data across instruments (e.g., NIFTY options, MCX gold).
+Simulate start/square-off times (e.g., 9:15 AM - 3:20 PM IST for equities) with auto-liquidation logic.
 
 
-Note: Ensure compatibility with existing torch or tensorflow installations if present.
-🛠 Phase 1: Core Plumbing & Data Hygiene (Week 1)
-Goal: Fix the "Garbage In, Garbage Out" problem and establish a realistic backtesting engine.
-[ ] Task 1.1: Replace Custom Backtester with VectorBT
-Priority: Critical
-Files: services/engine_astra/backtest_engine.py
-Instructions:
-Deprecate the custom for loop in run_backtest.
-Implement vectorbt (import as vbt).
-Create a Portfolio.from_signals() simulation.
-Crucial: Add fees=0.001 (0.1%) and slippage=0.0005 (0.05%) parameters to simulate real-world Indian market costs (STT + Brokerage).
-Calculate and return: Sharpe Ratio, Max Drawdown, Sortino Ratio.
-[ ] Task 1.2: Enhance Data Pipeline with Macro Data
-Priority: High
-Files: services/worker_chakra/tasks.py, shared/stock_list.py
-Instructions:
-In fetch_data (or equivalent), add calls to fetch:
-USD/INR (Ticker: INR=X)
-Brent Crude (Ticker: BZ=F)
-India VIX (Ticker: ^INDIAVIX)
-Nifty 50 (Ticker: ^NSEI)
-Merge these as columns: macro_usdinr, macro_crude, macro_vix, market_nifty.
-Forward-fill (ffill) missing data for macro indicators to align with stock timestamps.
-[ ] Task 1.3: Data Sanitization Layer
-Priority: Medium
-Files: services/engine_astra/technical_analysis.py
-Instructions:
-Create a function sanitize_data(df).
-Detect outliers: If Close changes > 20% in one day AND Volume change is < 200% (flash crash check), replace with NaN or interpolated value.
-Drop rows where Volume is 0 (non-trading days).
-📊 Phase 2: Advanced Feature Engineering (Week 2)
-Goal: Move beyond basic RSI/MACD to professional quantitative features.
-[ ] Task 2.1: Market Regime Detection ("The Traffic Light")
-Priority: High
-Files: services/engine_astra/market_regime.py (New File)
-Instructions:
-Fetch NIFTY 50 (^NSEI) history (1 year).
-Calculate: 200-day SMA, 50-day SMA, ADX(14).
-Logic:
-Bull: Price > 200SMA & 50SMA > 200SMA.
-Bear: Price < 200SMA & 50SMA < 200SMA.
-Sideways: ADX < 20.
-Output: An integer feature market_regime (1=Bull, -1=Bear, 0=Neutral) to be merged into individual stock data.
-[ ] Task 2.2: Cross-Sectional Normalization
-Priority: High
-Files: services/engine_astra/technical_analysis.py
-Instructions:
-Do not feed raw Volume to models. Create vol_rel: Volume / Rolling_Mean(Volume, 20).
-Do not feed raw Close. Create dist_ema: (Close - EMA_20) / Close.
-Normalize ATR: ATR / Close (Percentage volatility).
-[ ] Task 2.3: Target Variable Refinement
-Priority: Medium
-Files: services/engine_astra/ai_models.py
-Instructions:
-Change target from "Next Day Price" to "Log Returns": np.log(Close / Close.shift(1)).
-Alternatively, create a Classification Target:
-1 if Return > 1.0% (Buy)
--1 if Return < -1.0% (Sell)
-0 otherwise (Hold)
-🧠 Phase 3: Modeling Architecture Upgrade (Week 3)
-Goal: Replace simple Prophet models with State-of-the-Art Time-Series & Boosting models.
-[ ] Task 3.1: Implement Darts (TCN / N-BEATS)
-Priority: Critical (Replaces Prophet)
-Files: services/engine_astra/ai_models.py
-Instructions:
-Import darts.models.
-Implement NBEATSModel or TCNModel.
-Input: Past 60 days of [Close, Volume, RSI, Macro_Vix].
-Output: Forecast horizon (next 5-10 days).
-Note: These models handle non-linear dependencies much better than Prophet.
-[ ] Task 3.2: Integrate CatBoost & LightGBM
-Priority: High (Enhances XGBoost)
-Files: services/engine_astra/ai_models.py
-Instructions:
-Add CatBoostClassifier (for Buy/Sell signals) and LightGBMRegressor (for price targets).
-Why? CatBoost handles categorical features (like 'Sector') natively without One-Hot Encoding.
-Create an EnsembleV2 class that averages predictions from: XGBoost + CatBoost + LightGBM.
-[ ] Task 3.3: Hyperparameter Optimization (Optuna)
-Priority: Medium
-Files: services/engine_astra/tuning.py (New File)
-Instructions:
-Create an objective function for Optuna.
-Search space: Learning Rate (0.01-0.3), Depth (3-10), L2 Leaf Reg.
-Run 50 trials to find best params for the EnsembleV2 model.
-🕵️ Phase 4: Intelligence & Reliability (Week 4)
-Goal: Make the "Chanakya" agent smart, explainable, and hallucination-free.
-[ ] Task 4.1: Explainability with SHAP
-Priority: High
-Files: services/engine_astra/explainability.py (New File)
-Instructions:
-After model training, pass the model and test set to shap.TreeExplainer.
-Generate shap_values.
-Extract top 3 drivers: "Model predicts UP because [RSI is Low] and [VIX is High]".
-Pass this text string to the LLM context.
-[ ] Task 4.2: Vector Database for News (RAG)
-Priority: High (Nice to have)
-Files: shared/database.py, services/engine_astra/ai_catalyst.py
-Instructions:
-Enable pgvector extension in Postgres.
-Use sentence-transformers/all-MiniLM-L6-v2 (Free, HuggingFace) to embed news headlines.
-When analyzing a stock, query the DB for: "News similar to 'Earnings miss' in the past 3 years for this sector."
-Feed retrieved historical context to Ollama.
-✅ Definition of Done
-The project is considered "Upgraded" when:
-Backtests include transaction costs (0.1%).
-Prophet is removed/deprecated.
-Stock predictions consider Macro (Nifty/USDINR) context.
-The system can explain why it made a prediction using SHAP values.
+Phase 2: The Meta-Regime Switcher (Decision Core) (Major Update)
+Goal: Evolve into a full AI-driven meta-layer that auto-selects algorithms, indicators, intervals, chart types, and instruments based on conditions/news/capital.
+
+Task 2.1: Multi-Regime Detection (Enhanced)
+Update services/engine_astra/market_regime.py with hmmlearn HMM, now incorporating more features: Volatility (ATR), sentiment scores, event flags (e.g., budget session).
+Classify into expanded states: Add VOLATILE_COMMODITY for MCX, EVENT_DRIVEN for news impacts.
+
+Task 2.2: Algorithm Router (Ouroboros Service) (Enhanced)
+Expand strategy registry to include your full algo list as modules (e.g., stat_arb.py, rl_agent.py using Stable Baselines3 for RL).
+AI Auto-Selection: Use local LLM to choose/hybridize algos (e.g., "In bull trend with positive news, select Trend Following + Sentiment Analysis; for high-vol, Volatility Breakout + Scalping").
+Factors: Market condition (regime), news (from RAG), capital (e.g., HFT for large capital), events (budget via scraped calendars).
+Best Hybrid Recommendation: Core algo as "Adaptive Regime-Switching RL Agent" – An RL model (open-source Gym/Stable Baselines3) that learns to switch between your algos (e.g., MACD in trends, Pairs Trading in sideways, Sentiment in events). Fallback to rule-based for explainability.
+
+Task 2.3: Macro Sentiment Filter (Enhanced)
+Enhance News RAG with local LLM to score events (e.g., RBI hike = defensive; budget positive = aggressive).
+Auto-Adjust: Switch intervals (shorter like 1min for HFT/scalping in volatile news), indicators (RSI/MACD for oversold post-event), chart (Heikin Ashi for trend smoothing).
+
+New Task 2.4: Indicator & Config Selector
+Create services/engine_astra/config_selector.py.
+Local LLM decides: Indicators (e.g., Super Trend + VWAP for breakouts), comparators (crossovers, thresholds), intervals (1min for scalping, 15min for trends), chart types (candle for precision, Heikin Ashi for noise reduction).
+Tune with Optuna: Optimize params (e.g., RSI period) based on backtest results.
+
+
+Phase 3: The Order Management System (OMS) & State Machine (Updated)
+Goal: Backbone now includes advanced risk, trailing, and auto-configs.
+
+Task 3.1: Persistent Trade Schema (Enhanced)
+Add columns: instrument_type (equity/options/etc.), selected_algo, interval, indicators_used, start_time, square_off_time.
+
+Task 3.2: Virtual Execution Layer (The Ghost) (Enhanced)
+Pre-Trade Check: Add capital-based instrument filter, risk management (position sizing at 1-2% risk, auto-stoploss/profit booking at 1:2 RR).
+Implement Trailing: Dynamic trailing stops (e.g., using ATR from TA-Lib) and profit trailing (move SL to breakeven + trail).
+AI Override: Local LLM sets start/square-off (e.g., earlier square-off in volatile news).
+
+Task 3.3: Execution State Recovery (Unchanged)
+New Task 3.4: Risk Management Module
+Build services/engine_astra/risk_manager.py.
+Hard rules: Max drawdown 5%, auto-profit booking at targets, trailing based on regime (tighter in high-vol).
+Monte Carlo for forward-testing risk.
+
+
+Phase 4: Live Data & Shadow Mode Adapters (Updated)
+Goal: Real-time feeds now support multi-instruments and dynamic intervals.
+
+Task 4.1: Shoonya/AngelOne WebSocket Ticker (Enhanced)
+Extend to subscribe to multiple instruments (e.g., equity tickers, option chains, MCX futures).
+Recalculate indicators in real-time for selected intervals/charts.
+
+Task 4.2: The Broker Adapter Interface (Enhanced)
+Shadow mode logs now include AI-chosen configs (e.g., "Simulating MACD crossover on 5min Heikin Ashi for NIFTY options").
+
+Task 4.3: The Physical Kill-Switch (Unchanged)
+
+Phase 5: Reliability & Reconciliation (Updated)
+Goal: Ensure AI decisions are backtested and transparent.
+
+Task 5.1: The Reconciliation Worker (Enhanced)
+Add checks for config consistency (e.g., alert if AI-selected algo mismatches simulated positions).
+
+Task 5.2: Reasoning Transparency Log (Enhanced)
+UI feed now shows AI choices: e.g., "[09:15] Selected Pairs Trading for LOW_VOL_SIDEWAYS regime; Interval: 15min; Indicators: RSI + Bollinger; Reason: Neutral news, capital >1 lakh allows options."
+
+
+New Phase 6: Advanced AI Integration & Testing
+Goal: Finalize autonomous AI for all decisions, with comprehensive testing.
+
+Task 6.1: Local LLM Decision Engine
+Implement services/engine_astra/ai_decider.py using Hugging Face Transformers (e.g., fine-tune Llama on trading prompts).
+Inputs: Market data, news, capital, regimes. Outputs: Algo/instrument/interval/indicator selections with reasons.
+
+Task 6.2: Full Backtesting Suite
+Celery tasks to backtest AI-chosen configs across historical data (multi-instrument, intervals).
+Metrics: Sharpe, max DD, win rate; optimize with Optuna.
+
+Task 6.3: Shadow Mode Automation
+Run daily simulations with AI decisions; log for manual review (e.g., "Today: Selected Scalping on 1min candles for MCX due to high-vol news").

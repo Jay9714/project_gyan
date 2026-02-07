@@ -67,6 +67,9 @@ def train_prophet_model(df, ticker):
     # Prepare data for Prophet (ds = date, y = close)
     df_prophet = df[['date', 'close']].rename(columns={'date': 'ds', 'close': 'y'})
     
+    # NEW FIX: Remove duplicates
+    df_prophet = df_prophet[~df_prophet['ds'].duplicated(keep='first')]
+    
     # Ensure date is timezone-naive
     if pd.api.types.is_datetime64_any_dtype(df_prophet['ds']):
          df_prophet['ds'] = df_prophet['ds'].dt.tz_localize(None)

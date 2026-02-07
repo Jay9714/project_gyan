@@ -46,7 +46,20 @@ def safe_format(value, fmt="{:.2f}", default="N/A"):
     if value == 0.0: return "---"
     return fmt.format(value)
 
-def display_horizon_card(title, data):
+    # Timeframe Colors
+    st.markdown("""
+    <style>
+        .card-short { border-left: 5px solid #29B6F6; }
+        .card-mid { border-left: 5px solid #FFD600; }
+        .card-long { border-left: 5px solid #00C853; }
+        .risk-badge { padding: 5px 10px; border-radius: 5px; font-weight: bold; color: #fff; display: inline-block; font-size: 12px; }
+        .risk-low { background-color: #00C853; }
+        .risk-medium { background-color: #FFA726; }
+        .risk-high { background-color: #D50000; }
+    </style>
+    """, unsafe_allow_html=True)
+    
+def display_horizon_card(title, data, term_class):
     if data is None: return
     if isinstance(data, (dict, list)) and not data: return
     
@@ -56,22 +69,35 @@ def display_horizon_card(title, data):
     if verdict in ["BUY", "STRONG BUY"]: color_class = "buy"
     elif verdict == "SELL": color_class = "sell"
     elif verdict == "WAITING": color_class = "waiting"
+    elif verdict == "ACCUMULATE": color_class = "buy"
     
     target = data.get('target')
+    target_agg = data.get('target_agg', target) # Fallback
     sl = data.get('sl')
+    rr = data.get('rr', 'N/A')
     
     st.markdown(f"""
-    <div class="card">
+    <div class="card {term_class}">
         <div class="card-title">{title}</div>
         <div class="verdict-text {color_class}">{verdict}</div>
         <div class="metric-row">
             <div>
-                <div class="metric-label">Target</div>
+                <div class="metric-label" title="Conservative Target">Target 1</div>
                 <div class="metric-val">₹{safe_format(target)}</div>
             </div>
             <div style="text-align: right;">
-                <div class="metric-label">Stop Loss</div>
-                <div class="metric-val">₹{safe_format(sl)}</div>
+                <div class="metric-label" title="Aggressive Target">Target 2</div>
+                <div class="metric-val">₹{safe_format(target_agg)}</div>
+            </div>
+        </div>
+        <div class="metric-row">
+            <div>
+                <div class="metric-label" title="Stop Loss Level">Stop Loss</div>
+                <div class="metric-val" style="color: #ff6b6b;">₹{safe_format(sl)}</div>
+            </div>
+            <div style="text-align: right;">
+                <div class="metric-label" title="Risk to Reward Ratio">Risk:Reward</div>
+                <div class="metric-val" style="color: #4db6ac;">{rr}</div>
             </div>
         </div>
     </div>
@@ -98,175 +124,116 @@ def display_top_pick(rank, data, label="Top Pick"):
     </div>
     """, unsafe_allow_html=True)
 
-# --- TABS (Updated: Removed Portfolio) ---
-tab1, tab2 = st.tabs(["🚀 Deep Analysis", "🔎 Stock Finder"])
+# --- MAIN INTERFACE: DEEP ANALYSIS ---
 
-# --- TAB 1: DEEP ANALYSIS ---
-with tab1:
-    # --- SESSION STATE MANAGEMENT ---
-    if "analysis_data" not in st.session_state:
-        st.session_state["analysis_data"] = None
-        
-    if "current_ticker" not in st.session_state:
-        st.session_state["current_ticker"] = "RELIANCE.NS"
+# --- SESSION STATE MANAGEMENT ---
+if "analysis_data" not in st.session_state:
+    st.session_state["analysis_data"] = None
+    
+if "current_ticker" not in st.session_state:
+    st.session_state["current_ticker"] = "RELIANCE.NS"
 
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        ticker_input = st.text_input("Enter Ticker (e.g. RELIANCE.NS)", value=st.session_state["current_ticker"])
-    with col2:
-        st.write("")
-        st.write("")
-        analyze_btn = st.button("Analyze Stock", use_container_width=True, type="primary")
+col1, col2 = st.columns([3, 1])
+with col1:
+    ticker_input = st.text_input("Enter Ticker (e.g. RELIANCE.NS)", value=st.session_state["current_ticker"])
+with col2:
+    st.write("")
+    st.write("")
+    analyze_btn = st.button("Analyze Stock", use_container_width=True, type="primary")
 
-    # Trigger Analysis
-    if analyze_btn:
-        st.session_state["current_ticker"] = ticker_input
-        with st.spinner(f"Analyzing {ticker_input}..."):
-            try:
-                res = requests.get(f"{API_URL}/analysis/{ticker_input}")
-                if res.status_code == 200:
-                    st.session_state["analysis_data"] = res.json()
-                else:
-                    st.error(f"Error: {res.text}")
-                    st.session_state["analysis_data"] = None
-            except Exception as e:
-                st.error(f"Connection Error: {e}")
+# Trigger Analysis
+if analyze_btn:
+    st.session_state["current_ticker"] = ticker_input
+    with st.spinner(f"Analyzing {ticker_input}..."):
+        try:
+            res = requests.get(f"{API_URL}/analysis/{ticker_input}")
+            if res.status_code == 200:
+                st.session_state["analysis_data"] = res.json()
+            else:
+                st.error(f"Error: {res.text}")
                 st.session_state["analysis_data"] = None
+        except Exception as e:
+            st.error(f"Connection Error: {e}")
+            st.session_state["analysis_data"] = None
 
-    # Render Interface if Data Exists
-    if st.session_state["analysis_data"]:
-        data = st.session_state["analysis_data"]
-        
-        # Ensure we are displaying the ticker that matches the data
-        # (Optional safety check)
-        
-        st.subheader(f"{data.get('company_name', ticker_input)}")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Current Price", f"₹{safe_format(data.get('current_price'))}")
-        m2.metric("Sector", data.get('sector', 'N/A'))
-        source = data.get('source', 'Unknown')
-        
-        if source == 'database': 
-            m3.success("Source: Deep Analysis (Ready)")
-        else: 
-            m3.warning("Source: Live Fetch (Processing...)")
-            st.info("ℹ️ **New Stock Detected:** Full analysis has started in the background. Please wait 30-60 seconds and click 'Analyze Stock' again for the final verdict.")
-            
-        st.divider()
-        c1, c2, c3 = st.columns(3)
-        with c1: display_horizon_card("Short Term (2 Weeks)", data.get('st', {}))
-        with c2: display_horizon_card("Mid Term (2 Months)", data.get('mt', {}))
-        with c3: display_horizon_card("Long Term (1 Year)", data.get('lt', {}))
-        st.markdown(f"""
-        <div class="reasoning-box">
-            <strong>🤖 AI Reasoning:</strong><br>
-            {data.get('reasoning', 'No reasoning available.')}
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # --- BACKTEST SECTION (Phase 4) ---
-        st.write("")
-        st.divider()
-        st.subheader("🛠️ Strategy Validation (Beta)")
-        
-        if st.button("Run 3-Month Backtest", key="btn_backtest"):
-             # Logic continues below...
-                        with st.spinner("⏳ Simulating trades... This uses complex AI models and takes ~2-3 minutes. Please be patient."):
-                            try:
-                                bt_res = requests.get(f"{API_URL}/backtest/{ticker_input}")
-                                if bt_res.status_code == 200:
-                                    bt_data = bt_res.json()
-                                    if bt_data.get("status") == "success":
-                                        b1, b2, b3 = st.columns(3)
-                                        b1.metric("Win Rate", f"{bt_data.get('win_rate')}%")
-                                        b2.metric("Total Trades", bt_data.get('total_trades'))
-                                        
-                                        # Calculate Return from raw data if helpful, or just show trades
-                                        raw_trades = bt_data.get("data", [])
-                                        if raw_trades:
-                                            df_bt = pd.DataFrame(raw_trades)
-                                            # Simple equity curve approximation
-                                            st.line_chart(df_bt.set_index('date')[['pred_return', 'actual_return']])
-                                            st.dataframe(df_bt)
-                                        else:
-                                            st.warning("No trades generated in this period (Strategy Conservative).")
-                                    else:
-                                        st.error(f"Backtest Failed: {bt_data.get('reason', 'Unknown')}")
-                                else:
-                                    st.error(f"API Error: {bt_res.text}")
-                            except Exception as e:
-                                st.error(f"Error running backtest: {e}")
-
-# --- TAB 2: STOCK FINDER ---
-with tab2:
-    st.header("AI Stock Screener")
+# Render Interface if Data Exists
+if st.session_state["analysis_data"]:
+    data = st.session_state["analysis_data"]
     
-    horizon_map = {
-        "Short Term (14 Days)": "short",
-        "Mid Term (60 Days)": "mid",
-        "Long Term (1 Year)": "long"
-    }
+    # Market Status Logic
+    import datetime
+    import pytz
     
-    selected_horizon_label = st.radio("Select Investment Horizon", list(horizon_map.keys()), horizontal=True)
-    selected_horizon = horizon_map[selected_horizon_label]
-
-    if st.button("Find Top Picks", type="primary"):
-        with st.spinner(f"Scanning for best {selected_horizon_label} opportunities..."):
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.datetime.now(ist)
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    
+    is_market_open = (now.weekday() < 5) and (market_open <= now <= market_close)
+    status_text = "🟢 OPEN" if is_market_open else "🔴 CLOSED"
+    
+    st.subheader(f"{data.get('company_name', ticker_input)}  {status_text}")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Current Price", f"₹{safe_format(data.get('current_price'))}")
+    
+    # Risk Badge
+    risk_lvl = data.get('risk_level', 'MEDIUM')
+    risk_cls = f"risk-{risk_lvl.lower()}"
+    m2.markdown(f"**Risk Level**<br><span class='risk-badge {risk_cls}'>{risk_lvl}</span>", unsafe_allow_html=True)
+    
+    # Confidence
+    conf = data.get('confidence', 0) * 100
+    m3.metric("AI Confidence", f"{conf:.0f}%")
+    
+    # Updated Time
+    upd = data.get('last_updated', 'Today')
+    m4.metric("Last Updated", str(upd))
+    
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1: display_horizon_card("Short Term (2 Weeks)", data.get('st', {}), "card-short")
+    with c2: display_horizon_card("Mid Term (2 Months)", data.get('mt', {}), "card-mid")
+    with c3: display_horizon_card("Long Term (1 Year)", data.get('lt', {}), "card-long")
+    
+    st.markdown(f"""
+    <div class="reasoning-box">
+        <strong>🤖 AI Reasoning:</strong><br>
+        {data.get('reasoning', 'No reasoning available.').replace(chr(10), '<br>')}
+    </div>
+    <div style="margin-top: 10px; font-size: 12px; color: #666; text-align: center;">
+        ⚠️ <strong>DISCLAIMER:</strong> This analysis is for educational purposes only. Not financial advice. 
+        Markets are subject to risk. Please consult a SEBI registered advisor before trading.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # --- BACKTEST SECTION (Phase 4) ---
+    st.write("")
+    st.divider()
+    st.subheader("🛠️ Strategy Validation (Beta)")
+    
+    if st.button("Run 3-Month Backtest", key="btn_backtest"):
+         with st.spinner("⏳ Simulating trades... This uses complex AI models and takes ~2-3 minutes. Please be patient."):
             try:
-                res = requests.get(f"{API_URL}/screener/{selected_horizon}")
-                
-                if res.status_code == 200:
-                    opportunities = res.json()
-                    if opportunities:
-                        df = pd.DataFrame(opportunities)
+                bt_res = requests.get(f"{API_URL}/backtest/{ticker_input}")
+                if bt_res.status_code == 200:
+                    bt_data = bt_res.json()
+                    if bt_data.get("status") == "success":
+                        b1, b2, b3 = st.columns(3)
+                        b1.metric("Win Rate", f"{bt_data.get('win_rate')}%")
+                        b2.metric("Total Trades", bt_data.get('total_trades'))
                         
-                        def get_sector_note(row):
-                            reasoning = str(row.get('reasoning', ''))
-                            if "Sector Warning" in reasoning:
-                                return "⚠️ Bearish Sector"
-                            return "✅ OK"
-                        
-                        df['Sector Status'] = df.apply(get_sector_note, axis=1)
-                        df = df.sort_values(by=['confidence', 'upside_pct'], ascending=[False, False])
-                        
-                        st.subheader(f"🏆 Top 3 Picks for {selected_horizon_label}")
-                        top_cols = st.columns(3)
-                        for i in range(min(3, len(df))):
-                            row = df.iloc[i]
-                            with top_cols[i]:
-                                display_top_pick(i+1, row)
-                        
-                        st.divider()
-                        st.subheader("📋 All Opportunities")
-                        df['confidence'] = df['confidence'] * 100
-                        
-                        df_display = df[[
-                            'ticker', 'company_name', 'current_price', 
-                            'verdict', 'Sector Status', 'upside_pct', 'target_price', 
-                            'stop_loss', 'duration_days', 'confidence', 'reasoning'
-                        ]]
-                        
-                        df_display.columns = [
-                            "Ticker", "Company", "Price (₹)", 
-                            "Verdict", "Sector", "Upside %", "Target (₹)", 
-                            "Stop Loss (₹)", "Days", "Conf.", "Reasoning"
-                        ]
-                        
-                        st.dataframe(
-                            df_display.style.format({
-                                "Price (₹)": "{:.2f}", "Target (₹)": "{:.2f}", 
-                                "Stop Loss (₹)": "{:.2f}", "Upside %": "{:.2f}%", 
-                                "Conf.": "{:.1f}%", "Days": "{:.0f}"
-                            }).applymap(
-                                lambda x: "color: orange; font-weight: bold;" if "Bearish" in str(x) else "", 
-                                subset=['Sector']
-                            ),
-                            use_container_width=True,
-                            height=400
-                        )
+                        # Calculate Return from raw data if helpful, or just show trades
+                        raw_trades = bt_data.get("data", [])
+                        if raw_trades:
+                            df_bt = pd.DataFrame(raw_trades)
+                            # Simple equity curve approximation
+                            st.line_chart(df_bt.set_index('date')[['pred_return', 'actual_return']])
+                            st.dataframe(df_bt)
+                        else:
+                            st.warning("No trades generated in this period (Strategy Conservative).")
                     else:
-                        st.info(f"No strong BUY signals found for {selected_horizon_label} today.")
+                        st.error(f"Backtest Failed: {bt_data.get('reason', 'Unknown')}")
                 else:
-                    st.error(f"API Error: {res.status_code}")
+                    st.error(f"API Error: {bt_res.text}")
             except Exception as e:
-                st.error(f"API Error: {e}")
+                st.error(f"Error running backtest: {e}")

@@ -1,195 +1,243 @@
-def calculate_stop_loss(current_price, atr, term='short'):
-    multiplier = 1.5 if term == 'short' else 2.0 if term == 'mid' else 3.0
-    sl = current_price - (atr * multiplier)
+from technical_analysis import get_support_resistance_levels
+
+def calculate_stop_loss(current_price, atr, term='short', direction='LONG'):
+    multiplier = 1.5 if term == 'short' else 2.5 if term == 'mid' else 3.5
+    if direction == 'LONG':
+        sl = current_price - (atr * multiplier)
+    else:
+        sl = current_price + (atr * multiplier)
     return round(sl, 2)
 
-def calculate_momentum_target(current_price, atr, term='short'):
-    multiplier = 3.0 if term == 'short' else 8.0 if term == 'mid' else 15.0
-    target = current_price + (atr * multiplier)
-    return round(target, 2)
 
-def analyze_stock(ticker, current_price, rsi, macd, ema_50, atr, ai_confidence, prophet_forecast, fundamentals, sentiment_score, sector="Unknown", sector_status="NEUTRAL", catalyst_score=0.0):
+def determine_risk_level(altman_z, piotroski_f, beneish_m, vol_pct):
+    """
+    Classify Risk based on Fundamental Health & Volatility.
+    """
+    risk_score = 0
     
-    # --- 1. DATA PREP ---
-    def get_pred(days):
-        try: return prophet_forecast.iloc[days]['yhat']
-        except: return current_price
-        
-    st_target = get_pred(14)
-    mt_target = get_pred(60) 
-    lt_target = get_pred(365)
+    # Financial Distress (Altman Z)
+    if altman_z < 1.8: risk_score += 3 # High Risk
+    elif altman_z < 3.0: risk_score += 1 # Grey Zone
     
-    f_score = fundamentals.get('piotroski_f_score', 5)
-    z_score = fundamentals.get('altman_z_score', 3.0)
-    m_score = fundamentals.get('beneish_m_score', -2.5)
-    pe_ratio = fundamentals.get('pe_ratio', 20.0)
-    div_yield = fundamentals.get('dividend_yield', 0.0)
+    # Financial Strength (Piotroski F)
+    if piotroski_f < 4: risk_score += 2
+    
+    # Earnings Manipulation (Beneish M)
+    if beneish_m > -1.78: risk_score += 2
+    
+    # Volatility Risk
+    if vol_pct > 0.04: risk_score += 2 # >4% daily move is wildly volatile
+    elif vol_pct > 0.02: risk_score += 1
+    
+    if risk_score >= 5: return "HIGH"
+    elif risk_score >= 2: return "MEDIUM"
+    return "LOW"
 
-    # --- 2. SECTOR ADAPTIVE LOGIC ---
-    capital_intensive_keywords = [
-        'real estate', 'financial', 'banking', 'utilities', 
-        'infrastructure', 'power', 'telecom', 'capital goods', 
-        'construction', 'insurance', 'nbfc', 'industrials', 'defense', 'aerospace'
-    ]
-    is_capital_intensive = any(keyword in str(sector).lower() for keyword in capital_intensive_keywords)
-    ignore_z_score = True if is_capital_intensive else False
-
-    # --- 3. TURNAROUND LOGIC ---
-    is_uptrend = current_price > ema_50
-    is_positive_news = sentiment_score > 0.1
-    is_ai_bearish = st_target < current_price
-    is_safe = z_score > 1.8 or ignore_z_score
-    is_value_opportunity = (
-        (f_score >= 6 and pe_ratio < 20 and pe_ratio > 0) or 
-        (div_yield > 0.03) or
-        (pe_ratio < 15 and pe_ratio > 0)
-    )
+def analyze_timeframe(df, term, current_price, atr, base_verdict, fundamentals, sector_status):
+    """
+    Analyze specific timeframe (Short, Mid, Long) to determine trend, targets, and local verdict.
+    """
+    latest = df.iloc[-1]
+    reasoning = []
     
-    using_momentum_target = False
-
-    # GROWTH POTENTIAL/QUALITY Override
-    # Protect High ROE + High Growth stocks from being sold on technical dips
-    roe = fundamentals.get('roe', 0)
-    rev_growth = fundamentals.get('revenue_growth', 0)
-    debt_equity = fundamentals.get('debt_to_equity', 1.0)
+    # default
+    verdict = base_verdict
+    trend = "SIDEWAYS"
+    direction = "LONG"
     
-    is_high_quality_growth = (
-        roe > 0.15 and 
-        rev_growth > 0.10 and 
-        debt_equity < 0.5
-    )
-    # --- 4. SCORING ---
-    score = 0
-    if rsi < 40: score += 1
-    if macd > 0: score += 1
-    if is_uptrend: score += 1
-    
-    if f_score >= 7: score += 2
-    elif f_score <= 3: score -= 1
-    
-    if not ignore_z_score and z_score < 1.8: score -= 3
-    if m_score > -1.78: score -= 3
-    
-    if sentiment_score > 0.2: score += 2
-    elif sentiment_score < -0.2: score -= 2
-
-    # Value / Income Boost
-    if is_value_opportunity: score += 2
-    
-    # --- NEW: CATALYST INJECTION ---
-    # catalyst_score: 0 (None), 1 (Good), 2 (Mega/Strategic)
-    score += (catalyst_score * 2.5) # A Mega Catalyst adds +5 points, capable of flipping any verdict
-
-    # --- 5. VERDICT GENERATION ---
-    reasoning_lines = []
-    upside = ((st_target - current_price) / current_price) * 100
-    
-    verdict = "HOLD"
-    
-    # Override for Distress (Safety First)
-    if not ignore_z_score and z_score < 1.8: verdict = "AVOID"
-    elif m_score > -1.78: verdict = "AVOID"
-    
-    # Catalyst Override
-    elif catalyst_score >= 2:
-        verdict = "STRONG BUY" # Force Buy on Mega Catalyst
-        st_target = calculate_momentum_target(current_price, atr, 'short')
-        mt_target = calculate_momentum_target(current_price, atr, 'mid')
-        lt_target = calculate_momentum_target(current_price, atr, 'long')
-        using_momentum_target = True
-        
-    elif using_momentum_target or (is_uptrend and is_positive_news and is_ai_bearish and is_safe):
-        using_momentum_target = True
-        st_target = calculate_momentum_target(current_price, atr, 'short')
-        mt_target = calculate_momentum_target(current_price, atr, 'mid')
-        lt_target = calculate_momentum_target(current_price, atr, 'long')
-        verdict = "BUY" if score >= 2 else "ACCUMULATE"
-        
-    elif st_target < current_price:
-        if is_value_opportunity and upside > -10.0:
-            verdict = "ACCUMULATE"
-            st_target = max(st_target, calculate_momentum_target(current_price, atr, 'short'))
-            mt_target = max(mt_target, calculate_momentum_target(current_price, atr, 'mid'))
-            lt_target = max(lt_target, calculate_momentum_target(current_price, atr, 'long'))
-            reasoning_lines.append("💎 **Value Pick:** Strong fundamentals override short-term technical weakness. Targets adjusted for value realization.")
-        elif is_high_quality_growth:
-            # For Growth stocks, we don't want to SELL just because of a dip/correction.
-            # If the drop is huge (>30%), it might be a split artifact or real crash, so be careful.
-            # But generally, HOLD winners.
-            if upside > -30.0:
-                 verdict = "ACCUMULATE"
-                 st_target = max(st_target, calculate_momentum_target(current_price, atr, 'short'))
-                 mt_target = max(mt_target, calculate_momentum_target(current_price, atr, 'mid'))
-                 lt_target = max(lt_target, calculate_momentum_target(current_price, atr, 'long'))
-                 reasoning_lines.append("🚀 **Growth Rocket:** High quality compounder (High ROE/Growth). Buying on dips logic active.")
-            else:
-                 verdict = "HOLD"
-                 reasoning_lines.append("🛡️ **Quality Hold:** Fundamentals are elite. Holding despite technical volatility.")
+    # 1. Trend Detection
+    if term == 'short':
+        # Short Term: Price vs EMA20, RSI, Momentum
+        ema20 = latest['ema_20']
+        if current_price > ema20:
+            trend = "UP"
+            reasoning.append("Price > EMA20 (Bullish).")
         else:
-            verdict = "SELL" if upside < -2.0 else "HOLD"
-        
-        # Soft Catalyst Check: If we have a catalyst but math says SELL, force HOLD/ACCUMULATE
-        if catalyst_score >= 1 and verdict == "SELL":
-            verdict = "ACCUMULATE"
+            trend = "DOWN"
+            reasoning.append("Price < EMA20 (Bearish).")
             
-    elif upside > 15 and score >= 4: verdict = "STRONG BUY"
-    elif upside > 5 and score >= 3.5: verdict = "BUY"
-    elif score >= 2: verdict = "ACCUMULATE"
-
-    # --- 6. SECTOR OVERRIDE ---
-    sector_downgrade = False
-    if verdict in ["BUY", "STRONG BUY"] and sector_status == "BEARISH":
-        # Catalyst protects against Sector Downgrade
-        if catalyst_score < 2:
-            verdict = "HOLD"
-            sector_downgrade = True
-
-    # --- 7. RICH REASONING GENERATION ---
+        rsi = latest['rsi']
+        if rsi < 30: reasoning.append("RSI Oversold.")
+        elif rsi > 70: reasoning.append("RSI Overbought.")
+            
+    elif term == 'mid':
+        # Mid Term: Price vs EMA50, MACD
+        ema50 = latest['ema_50']
+        if current_price > ema50:
+            trend = "UP"
+            reasoning.append("Price > EMA50 (Bullish).")
+        else:
+            trend = "DOWN"
+            reasoning.append("Price < EMA50 (Bearish).")
+            
+        if latest['macd'] > latest['macd_signal']: reasoning.append("MACD Bullish Cross.")
+        else: reasoning.append("MACD Bearish.")
+        
+    elif term == 'long':
+        # Long Term: Price vs EMA200, Fundamentals
+        ema200 = latest['ema_200']
+        if current_price > ema200:
+            trend = "UP"
+            reasoning.append("Price > EMA200 (Long-Term Bull).")
+        else:
+            trend = "DOWN"
+            reasoning.append("Price < EMA200 (Long-Term Bear).")
+            
+    # 2. Refine Verdict based on Trend
+    if trend == "DOWN" and base_verdict in ["BUY", "STRONG BUY"]:
+        verdict = "ACCUMULATE" # Wait for reversal
+        if term == 'long': verdict = "HOLD" # If LT is down, be careful
+        
+    if trend == "UP" and base_verdict == "SELL":
+        verdict = "HOLD" # Don't sell in uptrend
+        
+    # 3. Targets
+    # Assume Long strategy for Targets usually, unless explicit Short logic needed.
+    # We set targets above current price for Bullish/Accumulate/Hold.
+    # If Bearish/Sell, maybe lower?
+    # Simple logic: Targets are upside potential.
     
-    reasoning_lines.append(f"### 🎯 **Final Verdict: {verdict}**")
+    # Calculate Stop Loss
+    if verdict == "SELL":
+        direction = "SHORT"
+    else:
+        direction = "LONG"
+        
+    stop_loss = calculate_stop_loss(current_price, atr, term, direction)
     
-    if catalyst_score >= 2:
-        reasoning_lines.append("🚀 **Mega-Catalyst Detected:** Strategic inputs indicate massive future value unlocking, overriding short-term technicals.")
+    risk = abs(current_price - stop_loss)
+    if risk == 0: risk = current_price * 0.05 # Fallback
     
-    if sector_downgrade:
-        reasoning_lines.append(f"⚠️ **Sector Warning:** While the stock looks good, the '{sector}' sector is currently **BEARISH**. We have downgraded the rating to **HOLD** to avoid fighting the trend.")
-    elif verdict == "STRONG BUY":
-        reasoning_lines.append("High conviction. Significant upside potential (>15%) combined with strong fundamentals.")
-    elif verdict == "BUY":
-        reasoning_lines.append("Solid upside potential (>5%) supported by decent quality scores.")
-    elif verdict == "ACCUMULATE":
-        reasoning_lines.append("Good stock in a dip. Safe to accumulate slowly.")
-    elif verdict == "SELL":
-        reasoning_lines.append(f"**⚠️ Downside Alert:** AI predicts a drop of {upside:.1f}%.")
-    elif verdict == "AVOID":
-        reasoning_lines.append("**⛔ Red Flag:** Distress Risk detected.")
-    elif verdict == "HOLD":
-        reasoning_lines.append("No clear signal. Wait for breakout.")
+    if direction == "LONG":
+        target_conservative = current_price + (risk * 2.0)
+        target_aggressive = current_price + (risk * 3.5)
+    else:
+        target_conservative = current_price - (risk * 2.0)
+        target_aggressive = current_price - (risk * 3.5)
+        
+    rr = round(abs(target_conservative - current_price) / risk, 2)
+    
+    return {
+        "verdict": verdict,
+        "trend": trend,
+        "target_conservative": round(target_conservative, 2),
+        "target_aggressive": round(target_aggressive, 2),
+        "stop_loss": round(stop_loss, 2),
+        "risk_reward": rr,
+        "reasoning": reasoning
+    }
 
-    # AI & Math
-    ai_msg = f"\n**🤖 AI Model Output:**\n"
-    ai_msg += f"- **Target:** ₹{st_target} ({upside:+.1f}%)\n"
-    ai_msg += f"- **Confidence:** {ai_confidence*100:.0f}%"
-    reasoning_lines.append(ai_msg)
+# ... (Start of analyze_stock)
+def analyze_stock(ticker, df, fundamentals, sentiment_score, ai_confidence, forecast_df, sector="Unknown", sector_status="NEUTRAL", catalyst_score=0.0):
+    """
+    Master Analysis Function.
+    df: DataFrame containing TA features.
+    """
+    latest = df.iloc[-1]
+    current_price = latest['close'] # Lowercase 'close'
+    atr = latest.get('atr', current_price * 0.02)
+    rsi = latest['rsi']
+    macd = latest['macd']
+    
+    # S&R Detection
+    # Note: get_support_resistance_levels might expect 'High'/'Low'. 
+    # Check if df has 'high'/'low' (lowercase) or 'High'/'Low'. 
+    # Since ai_df renamed them to lowercase in tasks.py line 249, we pass the lowercase ones.
+    # But get_support_resistance_levels in technical_analysis.py likely uses 'High'/'Low'.
+    # We should normalize column names or handle it.
+    
+    # Let's fix column access here first.
+    sr_levels = get_support_resistance_levels(df) #df is ai_df (lowercase cols)
+    nearest_support = max([l[0] for l in sr_levels if l[1] == 'Support' and l[0] < current_price], default=0)
+    nearest_resistance = min([l[0] for l in sr_levels if l[1] == 'Resistance' and l[0] > current_price], default=current_price*1.5)
+    
+    dist_support = (current_price - nearest_support) / current_price
+    dist_resistance = (nearest_resistance - current_price) / current_price
+    
+    near_support = dist_support < 0.03 # Within 3%
+    near_resistance = dist_resistance < 0.03 
 
-    # Sector
-    sec_msg = f"\n**🏢 Sector Pulse:**\n"
-    status_icon = "🟢" if sector_status == "BULLISH" else "🔴" if sector_status == "BEARISH" else "⚪"
-    sec_msg += f"- **{sector}:** {status_icon} {sector_status}\n"
-    if is_capital_intensive:
-        sec_msg += f"- **Note:** Risk rules relaxed for this sector."
-    reasoning_lines.append(sec_msg)
-
-    final_reasoning = "\n".join(reasoning_lines)
-
-    st_sl = calculate_stop_loss(current_price, atr, 'short')
-    mt_sl = calculate_stop_loss(current_price, atr, 'mid')
-    lt_sl = calculate_stop_loss(current_price, atr, 'long')
+    # --- 1. BASE SCORING ---
+    score = 0
+    if rsi < 30: score += 15 
+    elif 40 <= rsi <= 70: score += 10 
+    
+    if latest['close'] > latest['ema_50']: score += 20
+    if latest['macd'] > latest['macd_signal']: score += 15
+    if latest['vol_spike']: score += 5
+    
+    # S&R Scoring
+    if near_support: score += 10
+    if near_resistance: score -= 10 # Breakout or Reject? Assume Reject risk first.
+    
+    if fundamentals.get('piotroski_f_score', 0) >= 6: score += 10
+    if fundamentals.get('revenue_growth', 0) > 0.10: score += 10
+    
+    if sentiment_score > 0.1: score += 10
+    
+    # Catalyst Boost
+    score += (catalyst_score * 20)
+    
+    # Base Verdict
+    base_verdict = "HOLD"
+    if score >= 75: base_verdict = "STRONG BUY"
+    elif score >= 50: base_verdict = "BUY"
+    elif score >= 30: base_verdict = "ACCUMULATE"
+    elif score < 20: base_verdict = "SELL"
+    
+    # Sector Check
+    if sector_status == "BEARISH" and base_verdict in ["BUY", "STRONG BUY"]:
+        base_verdict = "ACCUMULATE" # Downgrade
+        
+    # --- 2. TIMEFRAME ANALYSIS ---
+    st_res = analyze_timeframe(df, 'short', current_price, atr, base_verdict, fundamentals, sector_status)
+    mt_res = analyze_timeframe(df, 'mid', current_price, atr, base_verdict, fundamentals, sector_status)
+    lt_res = analyze_timeframe(df, 'long', current_price, atr, base_verdict, fundamentals, sector_status)
+    
+    # --- 3. RISK ASSESSMENT ---
+    vol_pct = atr / current_price
+    risk_badge = determine_risk_level(
+        fundamentals.get('altman_z_score', 3), 
+        fundamentals.get('piotroski_f_score', 5), 
+        fundamentals.get('beneish_m_score', -3), 
+        vol_pct
+    )
+    
+    # --- 4. CONSTRUCT OUTPUT ---
+    # Merge reasoning
+    final_reasoning = (
+        f"**Technical Score:** {score}/100\n"
+        f"**Risk Level:** {risk_badge}\n"
+        f"**Strategy:** {st_res['trend']} (ST) -> {mt_res['trend']} (MT)\n\n"
+        f"**Short Term:** {st_res['verdict']} - {' '.join(st_res['reasoning'])}\n"
+        f"**Mid Term:** {mt_res['verdict']} - {' '.join(mt_res['reasoning'])}\n"
+        f"**Long Term:** {lt_res['verdict']} - {' '.join(lt_res['reasoning'])}\n"
+    )
 
     return {
-        "st": {"verdict": verdict, "target": round(st_target, 2), "sl": st_sl},
-        "mt": {"verdict": verdict, "target": round(mt_target, 2), "sl": mt_sl},
-        "lt": {"verdict": verdict, "target": round(lt_target, 2), "sl": lt_sl},
+        "st": {
+            "verdict": st_res['verdict'], 
+            "target": st_res['target_conservative'], 
+            "target_agg": st_res['target_aggressive'],
+            "sl": st_res['stop_loss'],
+            "rr": st_res['risk_reward']
+        },
+        "mt": {
+            "verdict": mt_res['verdict'], 
+            "target": mt_res['target_conservative'], 
+            "target_agg": mt_res['target_aggressive'],
+            "sl": mt_res['stop_loss'],
+            "rr": mt_res['risk_reward']
+        },
+        "lt": {
+            "verdict": lt_res['verdict'], 
+            "target": lt_res['target_conservative'], 
+            "target_agg": lt_res['target_aggressive'],
+            "sl": lt_res['stop_loss'],
+            "rr": lt_res['risk_reward']
+        },
+        "risk_level": risk_badge,
         "reasoning": final_reasoning,
         "ai_confidence": ai_confidence
     }
+

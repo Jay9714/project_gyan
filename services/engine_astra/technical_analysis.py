@@ -4,6 +4,78 @@ from ta.trend import MACD, EMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
 
+def get_support_resistance_levels(df, window=20):
+    """
+    Auto-detect Support & Resistance Levels based on local min/max.
+    """
+    levels = []
+    # robust column access
+    high_col = 'High' if 'High' in df.columns else 'high'
+    low_col = 'Low' if 'Low' in df.columns else 'low'
+    
+    # simple local min/max approach
+    for i in range(window, len(df) - window):
+        if is_support(df, i, window, low_col):
+            levels.append((df[low_col].iloc[i], 'Support'))
+        elif is_resistance(df, i, window, high_col):
+            levels.append((df[high_col].iloc[i], 'Resistance'))
+    return levels
+
+def is_support(df, i, n, col):
+    for x in range(i-n, i+n+1):
+        if x < 0 or x >= len(df): continue
+        if df[col].iloc[x] < df[col].iloc[i]: return False
+    return True
+
+def is_resistance(df, i, n, col):
+    for x in range(i-n, i+n+1):
+        if x < 0 or x >= len(df): continue
+        if df[col].iloc[x] > df[col].iloc[i]: return False
+    return True
+
+
+
+def get_trend_status(row):
+    """
+    Determine Trend based on EMA alignment.
+    """
+    price = row['Close']
+    ema20 = row['ema_20']
+    ema50 = row['ema_50']
+    ema200 = row['ema_200']
+    
+    if price > ema20 > ema50 > ema200:
+        return "Strong Bullish"
+    elif price > ema50 and price > ema200:
+        return "Bullish"
+    elif price < ema20 < ema50 < ema200:
+        return "Strong Bearish"
+    elif price < ema50 and price < ema200:
+        return "Bearish"
+    else:
+        return "Sideways"
+
+def get_indicator_summary(row):
+    """
+    Returns a dictionary of indicator statuses.
+    """
+    rsi = row['rsi']
+    macd = row['macd']
+    macd_sig = row['macd_signal']
+    
+    rsi_status = "Neutral"
+    if rsi > 70: rsi_status = "Overbought"
+    elif rsi < 30: rsi_status = "Oversold"
+    
+    macd_status = "Bullish" if macd > macd_sig else "Bearish"
+    
+    return {
+        "rsi": rsi_status,
+        "macd": macd_status,
+        "trend": get_trend_status(row)
+    }
+
+
 def sanitize_data(df):
     """
     Sanitize the dataframe:

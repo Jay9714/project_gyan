@@ -12,11 +12,16 @@ from celery import Celery
 from typing import List, Dict, Any
 import logging
 import traceback
+import redis
+import json
 
 app = FastAPI(title="Setu API - Project Gyan")
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 # Added 'backend' to enable result retrieval
 celery_app = Celery('api_sender', broker=REDIS_URL, backend=REDIS_URL)
+
+# Redis Client for Bot State
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 @app.get("/backtest/{ticker}")
 async def run_backtest(ticker: str):
@@ -95,10 +100,39 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
                 live_price = live['Close'].iloc[-1]
         except: pass
         
-        # Fallback if live fetch fails
+            # Fallback if live fetch fails
         if live_price == 0.0 and tech: 
             live_price = tech.close
             
+        # Helper: Calculate derived fields
+        def get_details(term, verdict, target, sl, price):
+            # Aggressive Target Heuristic (since not in DB)
+            # If Verdict is BUY, T2 is higher. If SELL, T2 is lower.
+            t_agg = target
+            if verdict in ["BUY", "STRONG BUY", "ACCUMULATE"]:
+                t_agg = target * 1.05 # +5% beyond conservative
+            elif verdict == "SELL":
+                t_agg = target * 0.95
+                
+            # RR
+            risk = abs(price - sl) if sl else 1.0
+            reward = abs(target - price) if target else 0.0
+            rr = f"1:{reward/risk:.1f}" if risk > 0 else "1:1"
+            
+            return {
+                "verdict": verdict, 
+                "target": target, 
+                "target_agg": round(t_agg, 2),
+                "sl": sl,
+                "rr": rr
+            }
+
+        # Risk Badge
+        risk_score = funda.score_risk or 50.0
+        risk_level = "MEDIUM"
+        if risk_score <= 30: risk_level = "LOW"
+        elif risk_score >= 70: risk_level = "HIGH"
+
         return {
             "ticker": funda.ticker,
             "company_name": funda.company_name or ticker,
@@ -106,12 +140,13 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
             "current_price": live_price,
             
             # Map DB columns to Nested Schema
-            "st": {"verdict": funda.st_verdict, "target": funda.st_target, "sl": funda.st_stoploss},
-            "mt": {"verdict": funda.mt_verdict, "target": funda.mt_target, "sl": funda.mt_stoploss},
-            "lt": {"verdict": funda.lt_verdict, "target": funda.lt_target, "sl": funda.lt_stoploss},
+            "st": get_details("short", funda.st_verdict, funda.st_target, funda.st_stoploss, live_price),
+            "mt": get_details("mid", funda.mt_verdict, funda.mt_target, funda.mt_stoploss, live_price),
+            "lt": get_details("long", funda.lt_verdict, funda.lt_target, funda.lt_stoploss, live_price),
             
             "verdict": funda.ai_verdict, # Legacy support
             "confidence": funda.ai_confidence,
+            "risk_level": risk_level,
             "target_price": funda.target_price,
             "reasoning": funda.ai_reasoning,
             "last_updated": funda.last_updated,
@@ -146,11 +181,12 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
             "company_name": t.info.get('longName', ticker),
             "sector": t.info.get('sector', "Unknown"),
             "current_price": current,
-            "st": {"verdict": verdict, "target": 0.0, "sl": 0.0},
-            "mt": {"verdict": verdict, "target": 0.0, "sl": 0.0},
-            "lt": {"verdict": verdict, "target": 0.0, "sl": 0.0},
+            "st": {"verdict": verdict, "target": 0.0, "sl": 0.0, "target_agg": 0.0, "rr": "N/A"},
+            "mt": {"verdict": verdict, "target": 0.0, "sl": 0.0, "target_agg": 0.0, "rr": "N/A"},
+            "lt": {"verdict": verdict, "target": 0.0, "sl": 0.0, "target_agg": 0.0, "rr": "N/A"},
             "verdict": verdict,
             "confidence": 0.0, 
+            "risk_level": "WAITING", # Added missing field
             "target_price": 0.0,
             "reasoning": "⚡ **ANALYSIS IN PROGRESS...**\n\nThe AI is currently crunching 2 years of data, balance sheets, and risk models. This takes about 30-60 seconds.\n\n**PLEASE WAIT AND REFRESH** to get the true Deep Analysis. Do not trade yet.",
             "last_updated": date.today(),
@@ -166,85 +202,33 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
 
 
-@app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
-def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
-    """
-    Returns the TOP opportunities for a specific horizon (short/mid/long).
-    """
-    if horizon == "short":
-        verdict_col = FundamentalData.st_verdict
-        target_col = FundamentalData.st_target
-        sl_col = FundamentalData.st_stoploss
-        days_col = FundamentalData.st_days
-        default_days = 14
-    elif horizon == "mid":
-        verdict_col = FundamentalData.mt_verdict
-        target_col = FundamentalData.mt_target
-        sl_col = FundamentalData.mt_stoploss
-        days_col = FundamentalData.mt_days
-        default_days = 60
-    elif horizon == "long":
-        verdict_col = FundamentalData.lt_verdict
-        target_col = FundamentalData.lt_target
-        sl_col = FundamentalData.lt_stoploss
-        days_col = FundamentalData.lt_days
-        default_days = 365
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid horizon '{horizon}'. Use: short, mid, long")
 
-    # Filter by 'BUY', 'ACCUMULATE', and 'STRONG BUY'
-    # We fetch ALL and sort in Python to handle calculated fields like 'upside'
-    results = db.query(FundamentalData).filter(
-        verdict_col.in_(['BUY', 'ACCUMULATE', 'STRONG BUY'])
-    ).all()
-    
-    screener_data = []
-    
-    for r in results:
-        # Optimization: Fetch price from DB Technicals instead of Live if speed is key
-        # For screener, speed >> live precision.
-        tech = db.query(StockData).filter(StockData.ticker == r.ticker).order_by(StockData.date.desc()).first()
-        curr_price = tech.close if tech else 0.0
-        
-        tgt = getattr(r, target_col.name)
-        sl = getattr(r, sl_col.name)
-        vld_days = getattr(r, days_col.name) or default_days
-        verdict = getattr(r, verdict_col.name)
-        
-        upside = 0.0
-        if curr_price > 0 and tgt:
-            upside = ((tgt - curr_price) / curr_price) * 100
-        
-        # --- HORIZON SPECIFIC FILTERING ---
-        if horizon == "long":
-            # Quality Filter: Discard Junk for Long Term
-            # F-Score < 5 means deteriorating fundamentals.
-            if r.piotroski_f_score is not None and r.piotroski_f_score < 5:
-                continue
-                
-        # Append to list
-        screener_data.append({
-            "ticker": r.ticker,
-            "company_name": r.company_name,
-            "current_price": curr_price,
-            "verdict": verdict,
-            "confidence": r.ai_confidence,
-            "target_price": tgt,
-            "stop_loss": sl,
-            "upside_pct": round(upside, 2),
-            "duration_days": vld_days,
-            "reasoning": r.ai_reasoning,
-            # Internal helpers for sorting
-            "_f_score": r.piotroski_f_score or 0
-        })
-    
-    # --- SORTING LOGIC ---
-    if horizon == "long":
-        # Sort by Quality (F-Score) weighted heavily with Upside
-        # We want High Quality stocks that also have upside.
-        screener_data.sort(key=lambda x: (x['_f_score'] * 10) + x['upside_pct'], reverse=True)
-    else:
-        # Short/Mid Term: Momentum rules. Pure Upside.
-        screener_data.sort(key=lambda x: x['upside_pct'], reverse=True)
-        
-    return screener_data[:20]
+# --------------------------------------------------------------------------------
+# DISABLED ENDPOINTS (Stock Finder & Auto-Trade) - FOCUS: DEEP ANALYSIS
+# --------------------------------------------------------------------------------
+# To re-enable, uncomment the code below or restore from version history.
+
+# @app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
+# def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
+#     """
+#     Returns the TOP opportunities for a specific horizon (short/mid/long).
+#     """
+#     ... (Code Removed to simplify focus) ... 
+#     return []
+
+# @app.get("/bot/status")
+# def get_bot_status():
+#     return {"active": False, "message": "Bot Disabled"}
+
+# @app.post("/bot/start")
+# def start_bot():
+#     return {"status": "disabled"}
+
+# @app.post("/bot/stop")
+# def stop_bot():
+#     return {"status": "disabled"}
+
+# @app.get("/bot/trades")
+# def get_bot_trades():
+#     return []
+

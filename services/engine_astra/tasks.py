@@ -25,6 +25,7 @@ import traceback
 from shared.fundamental_analysis import compute_fundamental_ratios, calculate_piotroski_f_score, altman_z_score, beneish_m_score, get_fundamental_score, get_risk_score
 from shared.news_analysis import analyze_news_sentiment
 from shared.sector_analysis import update_sector_trends
+from strategy_registry import StrategyRegistry # Phase 2.2
 
 # Import the Chanakya Agent
 try:
@@ -318,6 +319,13 @@ def process_one_stock(ticker):
         # analyze_stock doesn't explicitly take market_regime yet, but we can pass it via 'sector_status' logic or new arg.
         
         # Let's adjust 'Sector Status' influence or just print it for now as part of the 'Context'.
+        
+        # STRATEGY REGISTRY (Phase 2.2)
+        # 1. Look up strategy based on Regime
+        strategy_engine = StrategyRegistry()
+        active_strategy_func = strategy_engine.get_strategy(market_regime)
+        strategy_signal = active_strategy_func(ai_df)
+        print(f"ASTRA: Regime={market_regime} -> Strategy Signal={strategy_signal}")
 
         # CATALYST CHECK (DB + AI Fallback)
         cat_score, cat_context = get_catalyst_from_db(ticker)
@@ -338,11 +346,14 @@ def process_one_stock(ticker):
                     print(f"ASTRA: Failed to save AI catalyst: {e}")
                     db.rollback()
 
+        # Pass DataFrame (ai_df) to analyze_stock
         analysis = analyze_stock(
-            ticker, float(latest['Close']), float(latest['rsi']), float(latest['macd']),
-            float(latest['ema_50']), float(atr_val),
-            float(confidence), forecast, 
-            funda_dict, float(score_news),
+            ticker, 
+            ai_df,  # Passing full DF with TA features
+            funda_dict, 
+            float(score_news), 
+            float(confidence), 
+            forecast, # Prophet forecast
             sector=sector_name,
             sector_status=sector_status,
             catalyst_score=float(cat_score) 
@@ -352,9 +363,9 @@ def process_one_stock(ticker):
         summary = {
             'sector': sector_name,
             'sector_status': sector_status,
-            'trend': 'Bullish' if latest['Close'] > latest['ema_50'] else 'Bearish',
+            'trend': analysis['st']['rr'], # Using RR or Trend from new analysis
             'quality': 'High' if f_score >= 7 else 'Low',
-            'risk': 'High' if z_score < 1.8 else 'Safe',
+            'risk': analysis['risk_level'],
             'target': analysis['st']['target']
         }
         
@@ -374,6 +385,11 @@ def process_one_stock(ticker):
 
         # 5. SAVE
         existing = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
+        
+        # Map Risk Level to Score (Low=20, Med=50, High=80)
+        r_map = {"LOW": 20.0, "MEDIUM": 50.0, "HIGH": 80.0}
+        risk_score_val = r_map.get(analysis['risk_level'], 50.0)
+
         data_dict = {
             "company_name": info.get('longName', ticker),
             "sector": sector_name, "industry": info.get('industry', 'Unknown'),
@@ -381,9 +397,12 @@ def process_one_stock(ticker):
             "eps": float(info.get('trailingEps', 0)), "beta": float(info.get('beta', 0)),
             "piotroski_f_score": int(f_score), "altman_z_score": float(z_score), "beneish_m_score": float(m_score),
             "score_fundamental": 50.0, "score_news": float(score_news),
+            "score_risk": risk_score_val, # Saving Risk Score
+            
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),
             "lt_verdict": analysis['lt']['verdict'], "lt_target": float(analysis['lt']['target']), "lt_stoploss": float(analysis['lt']['sl']),
+            
             "ai_reasoning": final_reasoning, 
             "ai_confidence": float(analysis['ai_confidence']), 
             "predicted_close": predicted_close, "ensemble_score": float(comp_score),

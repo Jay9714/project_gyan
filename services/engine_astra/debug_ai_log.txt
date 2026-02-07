@@ -1,5 +1,2 @@
 LLM RESPONSE:
-{
-"score": 2,
-"context": "FM Sitharaman's announcement of a rare earth corridor in Budget 2026"
-}
+{ "score": 1, "context": "Promoter Bharti Airtel buys additional 5% stake in Indus Towers" }

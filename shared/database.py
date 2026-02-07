@@ -1,7 +1,10 @@
 import os
-from sqlalchemy import create_engine, Column, String, Float, Integer, Date, UniqueConstraint, Boolean
+from sqlalchemy import create_engine, Column, String, Float, Integer, Date, DateTime, UniqueConstraint, Boolean
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+# Task 3.1: Enhanced Schema
+# Added instrument_type, selected_algo, interval, start_time, square_off_time to TradeTable.
 
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:admin@db:5432/gyan_db')
 
@@ -36,9 +39,9 @@ class FundamentalData(Base):
     beta = Column(Float)
     
     # Advanced Risk Metrics
-    piotroski_f_score = Column(Integer, default=5) # 0-9 (Higher is better)
-    altman_z_score = Column(Float, default=3.0)    # >3 Safe, <1.8 Distress
-    beneish_m_score = Column(Float, default=-2.0)  # > -1.78 Manipulator
+    piotroski_f_score = Column(Integer, default=5) 
+    altman_z_score = Column(Float, default=3.0)    
+    beneish_m_score = Column(Float, default=-2.0)  
     
     # Component Scores (0-100)
     score_fundamental = Column(Float, default=50.0)
@@ -57,35 +60,60 @@ class FundamentalData(Base):
     target_price = Column(Float)
     ai_reasoning = Column(String)
     last_updated = Column(Date)
-
+    
     # MAX POWER COLUMNS
-    predicted_close = Column(Float)  # From Stacking Regressor
-    ensemble_score = Column(Float)   # Composite Score
+    predicted_close = Column(Float)
+    ensemble_score = Column(Float)
+
+
+class Trade(Base):
+    """
+    Task 3.1 Enhanced Trade Schema.
+    Used for persistent OMS tracking.
+    """
+    __tablename__ = "trades"
+    uuid = Column(String, primary_key=True, index=True)
+    ticker = Column(String, index=True)
+    instrument_type = Column(String, default="EQUITY_INTRADAY")
+    
+    direction = Column(String) # BUY/SELL
+    entry_price = Column(Float)
+    quantity = Column(Integer)
+    
+    sl_price = Column(Float)
+    tp_price = Column(Float)
+    
+    status = Column(String) # PENDING, OPEN, CLOSED, FAILED
+    
+    # AI Metadata
+    selected_algo = Column(String)
+    interval = Column(String)
+    indicators_used = Column(String)
+    reasoning = Column(String)
+    
+    # Times (Enhanced)
+    entry_time = Column(DateTime, default=datetime.utcnow)
+    exit_time = Column(DateTime)
+    start_time = Column(DateTime)    # AI Scheduled Start
+    square_off_time = Column(DateTime) # Auto-Liquidation Time
+    
+    pnl = Column(Float)
 
 
 class SectorPerformance(Base):
     __tablename__ = "sector_performance"
     id = Column(Integer, primary_key=True, index=True)
-    sector_name = Column(String, unique=True, index=True) # e.g., "Nifty Bank"
-    trend_score = Column(Float) # 0-100 (Below 40 = Bearish, Above 60 = Bullish)
-    status = Column(String) # "BULLISH", "BEARISH", "NEUTRAL"
+    sector_name = Column(String, unique=True, index=True)
+    trend_score = Column(Float)
+    status = Column(String)
     last_updated = Column(Date)
 
 class CatalystEvent(Base):
-    """
-    Stores Manual Strategic Overrides (The 'Chanakya' Inputs).
-    Replaces the temporary catalyst_store.py
-    """
     __tablename__ = "catalyst_events"
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True, nullable=False)
-    
-    # 1 (Good), 2 (Mega/Strategic), 0 (None/Clear)
     score = Column(Integer, default=0) 
-    
-    # The "Intel" or "Thesis"
     context = Column(String)
-    
     created_at = Column(Date, default=datetime.now().date)
     is_active = Column(Boolean, default=True)
 

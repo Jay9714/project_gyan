@@ -5,7 +5,9 @@ from typing import Optional
 class HorizonData(BaseModel):
     verdict: Optional[str]
     target: Optional[float]
+    target_agg: Optional[float]
     sl: Optional[float]
+    rr: Optional[str]
 
 class AnalysisResponse(BaseModel):
     ticker: str
@@ -19,6 +21,7 @@ class AnalysisResponse(BaseModel):
 
     verdict: Optional[str]
     confidence: Optional[float]
+    risk_level: Optional[str]
     target_price: Optional[float]
     reasoning: Optional[str]
     last_updated: Optional[date]

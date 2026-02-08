@@ -128,7 +128,7 @@ def analyze_timeframe(df, term, current_price, atr, base_verdict, fundamentals, 
     }
 
 # ... (Start of analyze_stock)
-def analyze_stock(ticker, df, fundamentals, sentiment_score, ai_confidence, forecast_df, sector="Unknown", sector_status="NEUTRAL", catalyst_score=0.0):
+def analyze_stock(ticker, df, fundamentals, sentiment_score, ai_confidence, forecast_df, sector="Unknown", sector_status="NEUTRAL", catalyst_score=0.0, sector_pe=0.0):
     """
     Master Analysis Function.
     df: DataFrame containing TA features.
@@ -185,10 +185,33 @@ def analyze_stock(ticker, df, fundamentals, sentiment_score, ai_confidence, fore
     elif score >= 30: base_verdict = "ACCUMULATE"
     elif score < 20: base_verdict = "SELL"
     
+    
     # Sector Check
     if sector_status == "BEARISH" and base_verdict in ["BUY", "STRONG BUY"]:
         base_verdict = "ACCUMULATE" # Downgrade
         
+    # Task 2.1: Institutional Valuation Engine
+    pe = fundamentals.get('pe_ratio', 0)
+    de = fundamentals.get('debt_to_equity', 0)
+    
+    if sector_pe > 0 and pe > 0:
+        # Phase 2.2: Relative Valuation Normalization
+        # Logic: Premium_to_Sector = Stock_PE / Sector_PE
+        sector_premium = pe / sector_pe
+        
+        # Rule: If Trading > 1.5x Sector Average, Cap at HOLD
+        if sector_premium > 1.5 and base_verdict in ["BUY", "STRONG BUY"]:
+             base_verdict = "HOLD"
+             score -= 20 # Heavy Penalty for Overvaluation
+             print(f"ASTRA: VALUATION CAP! Premium={sector_premium:.2f}x Sector. Downgraded to HOLD.")
+
+        # Existing Valuation Trap Logic (Risk Adjusted)
+        valuation_risk = sector_premium * (1 + de)
+        if valuation_risk > 3.0:
+            score -= 10
+            if base_verdict != "SELL": base_verdict = "HOLD" # Double safety
+            print(f"ASTRA: VALUATION TRAP DETECTED! Risk={valuation_risk:.2f}")
+
     # --- 2. TIMEFRAME ANALYSIS ---
     st_res = analyze_timeframe(df, 'short', current_price, atr, base_verdict, fundamentals, sector_status)
     mt_res = analyze_timeframe(df, 'mid', current_price, atr, base_verdict, fundamentals, sector_status)

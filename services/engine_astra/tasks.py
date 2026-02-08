@@ -232,12 +232,97 @@ def process_one_stock(ticker):
         m_score = beneish_m_score(fin, bal, cf)
         funda_dict = compute_fundamental_ratios(t)
         
+        # Task 4.1 Smart Money Tracking
+        fii_holding = float(info.get('heldPercentInstitutions', 0.0) or 0.0)
+        
+        # Task 2.1 Start: Fetch Sector PE
+        sector_name = info.get('sector', 'Unknown')
+        sector_pe = 0.0
+        sec_rec = db.query(SectorPerformance).filter(SectorPerformance.sector_name == sector_name).first()
+        if sec_rec: 
+             sector_status = sec_rec.status
+             sector_pe = sec_rec.sector_pe or 0.0
+        else:
+             sector_status = get_sector_status(db, sector_name) # Fallback
+             
+        # Task 4.1: Smart Money (FII/DII) Divergence Detector (NSEPython Upgrade)
+        distribution_trap = False
+        
+        # Define existing_funda BEFORE using it
+        existing_funda = db.query(FundamentalData).filter(FundamentalData.ticker == ticker).first()
+        
+        # 1. Fetch Global FII/DII Flow (Market Wide)
+        fii_net_flow = 0
+        dii_net_flow = 0
+        smart_money_trend = "NEUTRAL"
+        
+        try:
+            # Safer Import Strategy
+            # nsepython structure varies. Try both direct and module access.
+            import nsepython
+            fii_dii_data = []
+            
+            if hasattr(nsepython, 'nse_fii_dii'):
+                 fii_dii_data = nsepython.nse_fii_dii()
+            elif hasattr(nsepython, 'fii_dii_trading_activity'):
+                 fii_dii_data = nsepython.fii_dii_trading_activity()
+            else:
+                 # Try finding any function with 'fii'
+                 for attr in dir(nsepython):
+                     if 'fii' in attr.lower():
+                         print(f"ASTRA: Found potential FII function: {attr}")
+                         func = getattr(nsepython, attr)
+                         if callable(func):
+                             try:
+                                 fii_dii_data = func()
+                                 break
+                             except: pass
+
+            # nse_fii_dii returns list of dictionaries usually? Or DataFrame?
+            # It usually prints or returns JSON. Depending on version.
+            # Let's assume standard behavior: returns list of last few days.
+            # We urge caution and debugging here.
+            
+            # Assuming it returns a list of recent days data
+            if isinstance(fii_dii_data, list) and len(fii_dii_data) > 0:
+                 # Calculate 10-day MA of FII Net
+                 fii_vals = []
+                 for x in fii_dii_data[:10]:
+                     val = x.get('fii_net', 0)
+                     if isinstance(val, str): val = float(val.replace(',',''))
+                     fii_vals.append(float(val))
+                     
+                 if fii_vals:
+                     fii_10_ma = sum(fii_vals) / len(fii_vals)
+                     if fii_10_ma < -500: smart_money_trend = "BEARISH" # Selling > 500Cr avg
+                     elif fii_10_ma > 500: smart_money_trend = "BULLISH"
+                     
+        except Exception as e:
+            # Fallback (Log but don't crash)
+            print(f"ASTRA: NSEPython FII/DII Fetch Failed: {e}")
+        
+        # 2. Stock Specific Shareholding (Quarterly)
+        # We use stored previous vs current
+        prev_fii = existing_funda.fii_holding if existing_funda else 0.0
+        fii_change = fii_holding - (prev_fii or 0.0)
+        
+        # 3. Trap Logic: 
+        # Price UP + Global FII Selling (Trend) + Stock FII Dropping = Strong Distribution
+        price_change = (data_with_ta['Close'].iloc[-1] - existing_funda.predicted_close) / existing_funda.predicted_close if existing_funda and existing_funda.predicted_close else 0
+        
+        if price_change > 0.02 and smart_money_trend == "BEARISH":
+             # If Global Smart Money is selling and Price is rising...
+             # And specifically on this stock if FII is also cutting (or just flat while price pumps)
+             if fii_change <= 0:
+                 distribution_trap = True
+                 print(f"ASTRA: DISTRIBUTION TRAP! Price +{price_change:.1%} but FII Selling (Global & Local).")
+        
         # Calculate Scores
         comp_score = 0
         if f_score >= 7: comp_score += 30
         elif f_score >= 5: comp_score += 15
         if funda_dict['revenue_growth'] > 0.15: comp_score += 20
-        pe = info.get('trailingPE', 0)
+        pe = info.get('trailingPE') or 0
         if 0 < pe < 25: comp_score += 20
         latest_rsi = data_with_ta['rsi'].iloc[-1]
         if 40 <= latest_rsi <= 70: comp_score += 30
@@ -297,9 +382,9 @@ def process_one_stock(ticker):
         latest = data_with_ta.iloc[-1]
         atr_val = latest.get('atr', latest['Close']*0.02)
         
-        # SECTOR CHECK
-        sector_name = info.get('sector', 'Unknown')
-        sector_status = get_sector_status(db, sector_name)
+        # SECTOR CHECK (Moved Up)
+        # sector_name and status fetched earlier
+        pass
 
         # MARKET REGIME (Task 2.1)
         # We should calculate or fetch this. Ideally calculated globally once per day, 
@@ -346,6 +431,15 @@ def process_one_stock(ticker):
                     print(f"ASTRA: Failed to save AI catalyst: {e}")
                     db.rollback()
 
+
+        
+        # Inject Distribution Trap into Catalyst Context if present
+        if distribution_trap:
+             trap_msg = "WARNING: Smart Money Distribution Trap Detected (Price Rising, Institutions Selling)."
+             if cat_context: cat_context += f" | {trap_msg}"
+             else: cat_context = trap_msg
+             cat_score = -5 # Force Negative Sentiment
+
         # Pass DataFrame (ai_df) to analyze_stock
         analysis = analyze_stock(
             ticker, 
@@ -356,7 +450,8 @@ def process_one_stock(ticker):
             forecast, # Prophet forecast
             sector=sector_name,
             sector_status=sector_status,
-            catalyst_score=float(cat_score) 
+            catalyst_score=float(cat_score),
+            sector_pe=float(sector_pe)
         )
         
         # --- PHASE 3: AGENTIC REASONING ---
@@ -398,6 +493,11 @@ def process_one_stock(ticker):
             "piotroski_f_score": int(f_score), "altman_z_score": float(z_score), "beneish_m_score": float(m_score),
             "score_fundamental": 50.0, "score_news": float(score_news),
             "score_risk": risk_score_val, # Saving Risk Score
+            
+            # New Fields
+            "pledge_pct": float(funda_dict.get('pledge_pct', 0)),
+            "interest_coverage": float(funda_dict.get('interest_coverage', 100)),
+            "fii_holding": fii_holding,
             
             "st_verdict": analysis['st']['verdict'], "st_target": float(analysis['st']['target']), "st_stoploss": float(analysis['st']['sl']),
             "mt_verdict": analysis['mt']['verdict'], "mt_target": float(analysis['mt']['target']), "mt_stoploss": float(analysis['mt']['sl']),

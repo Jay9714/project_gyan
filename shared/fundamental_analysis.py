@@ -39,7 +39,8 @@ def compute_fundamental_ratios(stock_obj):
     """
     ratios = {
         "roe": 0.0, "debt_to_equity": 0.0, "free_cash_flow": 0.0, "revenue_growth": 0.0,
-        "market_cap": 0.0, "pe_ratio": 0.0, "eps": 0.0, "beta": 0.0, "dividend_yield": 0.0
+        "market_cap": 0.0, "pe_ratio": 0.0, "eps": 0.0, "beta": 0.0, "dividend_yield": 0.0,
+        "interest_coverage": 100.0, "pledge_pct": 0.0
     }
 
     try:
@@ -91,6 +92,20 @@ def compute_fundamental_ratios(stock_obj):
         elif 'revenueGrowth' in info:
              ratios["revenue_growth"] = float(info['revenueGrowth'])
 
+    
+        # Interest Coverage Ratio (EBIT / Interest Expense)
+        ebit = _get_val(fin, ["EBIT", "Operating Income"])
+        interest_expense = _get_val(fin, ["Interest Expense", "InterestMetrics"]) 
+        # Note: Interest Expense is usually negative in financials
+        if ebit and interest_expense:
+             ratios["interest_coverage"] = float(ebit / abs(interest_expense))
+        
+        # Pledge Percentage (Placeholder - Data not easily available in free YF)
+        # We try to look for 'heldPercentPledged' in info if it ever exists, or use 'sharesPercentSharesOut' as a very rough proxy if named suspiciously?
+        # For now, we default to 0.0 unless we find a specific key.
+        if 'heldPercentPledged' in info:
+             ratios["pledge_pct"] = float(info['heldPercentPledged'])
+        
     except Exception as e:
         print(f"ASTRA: Fundamental Calc Warning: {e}")
     
@@ -261,5 +276,13 @@ def get_risk_score(ratios, risk_metrics):
     
     m = risk_metrics.get('m_score', -2.5)
     if m > -1.78: score -= 25
+    
+    
+    # Task 1.2: Integrity Shield Penalties
+    pledge = ratios.get('pledge_pct', 0)
+    icr = ratios.get('interest_coverage', 100)
+    
+    if pledge > 0.25: score -= 30 # Governance Red Flag
+    if icr < 1.5: score -= 20 # Solvency Risk
     
     return max(0, min(100, score))

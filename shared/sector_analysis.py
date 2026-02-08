@@ -98,16 +98,25 @@ def update_sector_trends(db: Session):
             elif score <= 40: status = "BEARISH"
             
             # 5. Save to DB
+            # Task 2.1: Fetch Sector PE
+            sector_t = yf.Ticker(ticker)
+            try: 
+                 sector_pe = float(sector_t.info.get('trailingPE', 0.0))
+            except: 
+                 sector_pe = 0.0
+
             existing = db.query(SectorPerformance).filter(SectorPerformance.sector_name == sector_name).first()
             if existing:
                 existing.trend_score = float(score)
                 existing.status = status
+                existing.sector_pe = sector_pe
                 existing.last_updated = today
             else:
                 db.add(SectorPerformance(
                     sector_name=sector_name,
                     trend_score=float(score),
                     status=status,
+                    sector_pe=sector_pe,
                     last_updated=today
                 ))
             

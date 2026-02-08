@@ -45,23 +45,28 @@ class MarketRegimeDetector:
         
         # Fit
         self.model.fit(X)
-        # We need to map Hidden States 0-3 to human readable regimes (Bull, Bear, etc.)
-        # This mapping is tricky unsupervised. We usually sort by Mean Returns.
         
+        # Task 3.1 & 2.1: 4-State HMM
         means = self.model.means_ # Shape (4, 3)
         # Col 0 is log_ret.
         sorted_indices = np.argsort(means[:, 0]) # Sort by returns
         
+        # Mapping based on return/volatility characteristics
+        # Lowest Returns -> BEAR_CRASH
+        # Low/Negative Returns + High Vol -> SIDEWAYS_CHOP (or BEAR)
+        # Positive Returns + Low Vol -> BULL_STABLE
+        # Highest Returns + High Vol -> HIGH_VOL_EVENT (Breakout)
+        
         self.regime_map = {
-            sorted_indices[0]: "HIGH_VOL_CRASH",    # Lowest returns (negative)
-            sorted_indices[1]: "BEAR_TREND",        # Negative/Low returns
-            sorted_indices[2]: "LOW_VOL_SIDEWAYS",  # Low/Pos returns
-            sorted_indices[3]: "BULL_TREND"         # Highest returns
+            sorted_indices[0]: "BEAR_CRASH",     # Lowest returns (Crash)
+            sorted_indices[1]: "SIDEWAYS_CHOP",  # Low returns
+            sorted_indices[2]: "BULL_STABLE",    # Good returns, stable
+            sorted_indices[3]: "HIGH_VOL_EVENT"  # Highest returns/volatility
         }
         
     def detect_regime(self, df):
         """
-        Returns: Regime String (BULL_TREND, BEAR_TREND, etc.)
+        Returns: Regime String
         """
         if HAS_HMM and self.model:
             # HMM Logic
@@ -82,6 +87,7 @@ class MarketRegimeDetector:
     def rule_based_detect(self, df):
         """
         Fallback Logic (Task 2.1 Enhanced with ATR)
+        Aligned to new 3-State Regimes.
         """
         if df.empty: return "NEUTRAL"
         
@@ -96,21 +102,26 @@ class MarketRegimeDetector:
         sma_50 = close.rolling(50).mean().iloc[-1]
         price = close.iloc[-1]
         
-        # 1. Crash Check
-        if atr_pct > 0.03 and price < sma_200: # >3% daily move & below 200SMA
-            return "HIGH_VOL_CRASH"
+        # 1. Crash Check (Extreme Vol + Downtrend)
+        if atr_pct > 0.03 and price < sma_200: 
+            return "BEAR_CRASH"
             
-        # 2. Sideways
-        if adx < 20: 
-            return "LOW_VOL_SIDEWAYS"
+        # 2. High Vol Event (Breakout/News)
+        # High ATR but Price > SMA200 or Recent Surge
+        if atr_pct > 0.03 and price > sma_200:
+             return "HIGH_VOL_EVENT"
             
-        # 3. Trends
+        # 3. Sideways (Low ADX)
+        if adx < 25: 
+            return "SIDEWAYS_CHOP"
+            
+        # 4. Trends
         if price > sma_200 and sma_50 > sma_200:
-            return "BULL_TREND"
+            return "BULL_STABLE"
         elif price < sma_200:
-            return "BEAR_TREND"
+            return "BEAR_CRASH"
             
-        return "NEUTRAL"
+        return "SIDEWAYS_CHOP"
 
 # Singleton
 regime_detector = MarketRegimeDetector()

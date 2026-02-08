@@ -9,9 +9,9 @@ class StrategyRegistry:
     def __init__(self):
         # Maps Regime String to Strategy Function
         self.strategies = {
-            "BULL_TREND": self.strategy_trend_following,
-            "BEAR_TREND": self.strategy_short_scalp,
-            "LOW_VOL_SIDEWAYS": self.strategy_mean_reversion,
+            "BULL_STABLE": self.strategy_trend_following,
+            "BEAR_VOLATILE": self.strategy_short_scalp,
+            "SIDEWAYS_CRUSH": self.strategy_mean_reversion,
             "HIGH_VOL_CRASH": self.strategy_volatility_breakout,
             "VOLATILE_COMMODITY": self.strategy_scalping_commodities,
             "EVENT_DRIVEN": self.strategy_event_arb,

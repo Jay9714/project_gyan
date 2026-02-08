@@ -36,16 +36,29 @@ def explain_prediction(model, X_sample):
         vals = shap_values[0] if len(shap_values.shape) > 1 else shap_values
         
         feature_importance = pd.DataFrame(list(zip(feature_names, vals)), columns=['col_name','feature_importance_vals'])
+        
+        # Calculate Percentage Contribution (Relative to Total Impact)
+        total_impact = np.sum(np.abs(vals)) + 1e-9
+        feature_importance['pct'] = (feature_importance['feature_importance_vals'] / total_impact) * 100
+        
         feature_importance.sort_values(by=['feature_importance_vals'], ascending=False, inplace=True)
         
         top_drivers = feature_importance.head(3)
-        bottom_drivers = feature_importance.tail(3)
+        # For negative, we want the most negative, which are at the bottom
+        bottom_drivers = feature_importance.tail(2)
         
-        explanation = "Key Drivers: "
+        explanation = "key_factors: "
+        features_list = []
+        
         for index, row in top_drivers.iterrows():
-            explanation += f"{row['col_name']} (+), "
-            
-        return explanation
+            if row['feature_importance_vals'] > 0:
+                features_list.append(f"{row['col_name']} (+{row['pct']:.1f}%)")
+                
+        for index, row in bottom_drivers.iterrows():
+             if row['feature_importance_vals'] < 0:
+                features_list.append(f"{row['col_name']} ({row['pct']:.1f}%)")
+                
+        return ", ".join(features_list)
         
     except Exception as e:
         print(f"SHAP Error: {e}")

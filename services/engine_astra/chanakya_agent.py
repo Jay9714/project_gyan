@@ -39,6 +39,16 @@ def generate_chanakya_reasoning(ticker, verdict, ai_confidence, data_summary, ca
         """
     
     prompt += """
+    EXPLAINABILITY INSTRUCTION (XAI):
+    Use the 'Local Factors' (SHAP values with %) provided.
+    You MUST explain the trade logic explicitly:
+    "Recommend [Verdict] because [Top Positive Feature] contributed [X]% to the model confidence, while [Negative Feature] acted as a [Y]% drag."
+    
+    Example: "Recommend BUY because RSI contributed 40% to the model confidence, while Volatility acted as a 10% drag."
+    This transparency is mandatory.
+    """
+    
+    prompt += """
     Style: Professional, direct, actionable. No disclaimers.
     Output format:
     **Thesis:** [Your reasoning]

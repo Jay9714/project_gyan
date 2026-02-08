@@ -41,7 +41,12 @@ class FundamentalData(Base):
     # Advanced Risk Metrics
     piotroski_f_score = Column(Integer, default=5) 
     altman_z_score = Column(Float, default=3.0)    
-    beneish_m_score = Column(Float, default=-2.0)  
+    beneish_m_score = Column(Float, default=-2.0)
+    
+    # Task 1.2: Integrity Shield
+    pledge_pct = Column(Float, default=0.0) 
+    interest_coverage = Column(Float, default=100.0) # Default safe
+    fii_holding = Column(Float, default=0.0) # Task 4.1 Smart Money
     
     # Component Scores (0-100)
     score_fundamental = Column(Float, default=50.0)
@@ -106,6 +111,10 @@ class SectorPerformance(Base):
     sector_name = Column(String, unique=True, index=True)
     trend_score = Column(Float)
     status = Column(String)
+    
+    # Task 2.1: Valuation Engine
+    sector_pe = Column(Float, default=0.0)
+    
     last_updated = Column(Date)
 
 class CatalystEvent(Base):

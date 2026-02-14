@@ -71,38 +71,6 @@ class FundamentalData(Base):
     ensemble_score = Column(Float)
 
 
-class Trade(Base):
-    """
-    Task 3.1 Enhanced Trade Schema.
-    Used for persistent OMS tracking.
-    """
-    __tablename__ = "trades"
-    uuid = Column(String, primary_key=True, index=True)
-    ticker = Column(String, index=True)
-    instrument_type = Column(String, default="EQUITY_INTRADAY")
-    
-    direction = Column(String) # BUY/SELL
-    entry_price = Column(Float)
-    quantity = Column(Integer)
-    
-    sl_price = Column(Float)
-    tp_price = Column(Float)
-    
-    status = Column(String) # PENDING, OPEN, CLOSED, FAILED
-    
-    # AI Metadata
-    selected_algo = Column(String)
-    interval = Column(String)
-    indicators_used = Column(String)
-    reasoning = Column(String)
-    
-    # Times (Enhanced)
-    entry_time = Column(DateTime, default=datetime.utcnow)
-    exit_time = Column(DateTime)
-    start_time = Column(DateTime)    # AI Scheduled Start
-    square_off_time = Column(DateTime) # Auto-Liquidation Time
-    
-    pnl = Column(Float)
 
 
 class SectorPerformance(Base):

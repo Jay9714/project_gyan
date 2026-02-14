@@ -1,7 +1,0 @@
-LLM RESPONSE:
-{ 
-"forensic_risk": "NEUTRAL", 
-"forensic_reasoning": "No evidence of legal finality, solvency crisis, or integrity breach found in the provided news articles.", 
-"catalyst_score": 1, 
-"catalyst_context": "NMDC's shares are recommended for buying by Dharmesh Shah of ICICI Securities, suggesting a positive growth driver." 
-}

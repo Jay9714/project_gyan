@@ -200,35 +200,3 @@ def get_stock_analysis(ticker: str, db: Session = Depends(get_db)):
     except Exception as e:
         logging.error(f"API Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Live analysis failed: {str(e)}")
-
-
-
-# --------------------------------------------------------------------------------
-# DISABLED ENDPOINTS (Stock Finder & Auto-Trade) - FOCUS: DEEP ANALYSIS
-# --------------------------------------------------------------------------------
-# To re-enable, uncomment the code below or restore from version history.
-
-# @app.get("/screener/{horizon}", response_model=list[ScreenerResponse])
-# def get_screener_signals(horizon: str, db: Session = Depends(get_db)):
-#     """
-#     Returns the TOP opportunities for a specific horizon (short/mid/long).
-#     """
-#     ... (Code Removed to simplify focus) ... 
-#     return []
-
-# @app.get("/bot/status")
-# def get_bot_status():
-#     return {"active": False, "message": "Bot Disabled"}
-
-# @app.post("/bot/start")
-# def start_bot():
-#     return {"status": "disabled"}
-
-# @app.post("/bot/stop")
-# def stop_bot():
-#     return {"status": "disabled"}
-
-# @app.get("/bot/trades")
-# def get_bot_trades():
-#     return []
-

@@ -31,7 +31,7 @@ Project Gyan follows a **Event-Driven Microservices Architecture**, containerize
 | **Astra Brain** | `gyan_astra_brain` | **Compute Engine** | - | The "Brain". A heavy **Celery** worker responsible for training ML models, running inference, executing VectorBT backtests, and calculating SHAP values. Scalable horizontally. |
 | **Chakra Scheduler** | `gyan_chakra_scheduler` | **Cron Manager** | - | A specialized **Celery Beat** instance that orchestrates periodic tasks: Nightly Setup, Sector Updates, and Data Refresh jobs to ensure the DB never goes stale. |
 | **Darpan UI** | `gyan_darpan_ui` | **Frontend** | `8501` | A simplified "Bloomberg Terminal" built with **Streamlit**. Visualizes complex data, renders interactive Plotly charts, and displays Agentic narratives. |
-| **Sutra Automation** | `gyan_sutra_automation` | **Workflow** | `5678` | An **n8n** instance for low-code automation. Handles external triggers, alerts (Email/Telegram), and complex multi-step pipelines without code changes. |
+
 | **Ollama** | `gyan_ollama` | **LLM Server** | `11434` | Local inference server for Open-Source LLMs (Llama 3, Mistral). Ensures data privacy by keeping financial reasoning on-premise. |
 | **PostgreSQL** | `gyan_db` | **Database** | `5432` | Relational automated storage for Fundamental Data, Stock Prices (1M+ rows), and User Configs. |
 | **Redis** | `gyan_redis` | **Message Queue** | `6379` | High-speed message broker for Celery and result caching backend. |

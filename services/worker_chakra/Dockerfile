@@ -4,7 +4,7 @@ RUN useradd -m appuser
 WORKDIR /app
 
 # Copy the local requirements.txt
-COPY requirements.txt .
+COPY services/worker_chakra/requirements.txt requirements.txt
 RUN pip install --default-timeout=1000 --retries 10 --no-cache-dir -r requirements.txt
 
 # Copy app code

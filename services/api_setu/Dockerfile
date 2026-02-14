@@ -13,8 +13,7 @@ RUN pip install --upgrade pip
 # 2. Configure timeout
 RUN pip config set global.timeout 3000
 
-# 3. Install PyTorch CPU first (Critical for FinBERT)
-RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+# 3. Install the rest
 
 # 4. Install the rest
 RUN pip install --no-cache-dir -r requirements.txt

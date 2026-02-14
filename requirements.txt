@@ -9,7 +9,6 @@ yfinance
 ta
 prophet
 scikit-learn
-tensorflow
 streamlit
 requests
 plotly

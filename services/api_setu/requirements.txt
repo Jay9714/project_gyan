@@ -7,7 +7,5 @@ yfinance
 pandas
 ta
 celery
-vaderSentiment
-textblob
 requests
 lxml

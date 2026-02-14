@@ -10,7 +10,7 @@ OLLAMA_URL = f"http://{OLLAMA_HOST}:11434/api/generate"
 MODEL_NAME = "llama3"
 
 
-BLACKLIST_KEYWORDS = ["SEBI Ban", "Insolvency", "NCLT", "CBI", "ED Raid", "Promoter Arrest", "Forensic Audit"]
+
 
 def generate_ai_catalyst(ticker, news_items=None):
     """
@@ -80,11 +80,8 @@ def generate_ai_catalyst(ticker, news_items=None):
         if response.status_code == 200:
             res_json = response.json()
             llm_text = res_json.get('response', '')
-            with open("debug_ai_log.txt", "w", encoding="utf-8") as f:
-                f.write(f"LLM RESPONSE:\n{llm_text}\n")
             
             # Simple manual JSON parsing (robustness)
-            import json
             try:
                 # Try to find JSON object in text
                 start = llm_text.find('{')
@@ -119,7 +116,5 @@ def generate_ai_catalyst(ticker, news_items=None):
         return 0, None
         
     except Exception as e:
-        with open("debug_ai_log.txt", "w", encoding="utf-8") as f:
-            f.write(f"ERROR: Inference failed: {e}\n")
         print(f"AI Catalyst: Inference failed: {e}")
         return 0, None
